@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <!--
+      Public API doc comments are mandatory for everything under src/
+      (AGENTS.md §1.2) — re-enable CS1591 ("missing XML comment for
+      publicly visible type or member") as a build ERROR here, overriding
+      the root Directory.Build.props's suppression (which exists only to
+      keep test projects, where per-[Fact]-method doc comments would be
+      pure noise, quiet). This makes "every public member is documented"
+      an enforced build gate, not just a followed convention.
+    -->
+    <NoWarn></NoWarn>
+    <WarningsNotAsErrors></WarningsNotAsErrors>
+  </PropertyGroup>
+</Project>

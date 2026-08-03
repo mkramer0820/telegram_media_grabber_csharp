@@ -1,0 +1,70 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\TelegramMediaGrabber.Domain\TelegramMediaGrabber.Domain.csproj" />
+    <ProjectReference Include="..\TelegramMediaGrabber.Application\TelegramMediaGrabber.Application.csproj" />
+    <ProjectReference Include="..\TelegramMediaGrabber.Infrastructure\TelegramMediaGrabber.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Bundled into the publish output so someone running only the built
+      .exe (not the source repo) still has everything needed to set up
+      and understand config on their own; Program.cs's first-run
+      guidance (missing .env/.env-values/config checks) points back at
+      these exact files by name.
+    -->
+    <None Include="..\..\.env.example" CopyToPublishDirectory="PreserveNewest" Link=".env.example" />
+    <None Include="..\..\config\channels.example.yaml" CopyToPublishDirectory="PreserveNewest" Link="config\channels.example.yaml" />
+    <None Include="..\..\README.md" CopyToPublishDirectory="PreserveNewest" Link="README.md" />
+    <None Include="..\..\CONFIG.md" CopyToPublishDirectory="PreserveNewest" Link="CONFIG.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DotNetEnv" Version="3.2.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="Spectre.Console" Version="0.57.2" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!--
+    Single-file, self-contained publish (CSHARP_PORT_GUIDE.md §10):
+    `dotnet publish -c Release -r win-x64 -p:SelfContained=true` produces
+    one distributable executable with the .NET runtime and every dependency
+    (Domain/Application/Infrastructure DLLs, NuGet packages) embedded;
+    nothing else needs to be installed on the target machine.
+
+    SelfContained is deliberately NOT set here (only passed on the publish
+    command line / a publish profile): setting it project-wide makes even
+    a plain `dotnet build`/IDE build resolve a RuntimeIdentifier and emit a
+    second, RID-specific apphost stub next to the normal framework-dependent
+    build output (a real "which .exe is the real one" trap, not just a
+    folder-layout curiosity). PublishSingleFile/IncludeNativeLibrariesForSelfExtract/
+    EnableCompressionInSingleFile only take effect once SelfContained is
+    true for that invocation, so leaving them here is inert for `dotnet
+    build`/`dotnet test` and only activates for an actual publish.
+    RuntimeIdentifiers (plural) only affects what gets restored, not what
+    a plain Build emits, so it's safe to leave declared.
+
+    PublishTrimmed is deliberately NOT enabled: YamlDotNet, TagLibSharp,
+    Serilog, and WTelegramClient all rely on reflection in ways trimming
+    can silently break at runtime without a build-time error; not worth
+    the size savings without a dedicated trimming-compatibility pass.
+  -->
+  <PropertyGroup>
+    <RuntimeIdentifiers>win-x64;linux-x64;osx-x64</RuntimeIdentifiers>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+</Project>

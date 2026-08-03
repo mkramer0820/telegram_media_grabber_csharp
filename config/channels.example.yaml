@@ -1,0 +1,146 @@
+# Reference examples for config/channels.yaml, one per common use case.
+# This file is not read by the application — copy the entries you need into
+# your real config/channels.yaml. See
+# src/TelegramMediaGrabber.Application/Configuration/ChannelOptions.cs for
+# the authoritative schema; this file is kept in sync with it by hand.
+
+# --- Top-level settings (apply to every channel below) ---------------------
+download_root: downloads          # base dir for non-audiobook output_subdirs
+max_concurrent_downloads: 5       # 1-50; shared semaphore across ALL channels
+
+# Upload mode (`dotnet run ... -- --mode upload`) settings. Each job routes
+# one local directory to one destination chat; upload mode has nothing to
+# send if upload_jobs is empty/omitted. Files within a job are batched into
+# Telegram media groups (albums) of up to 10 at a time.
+upload_jobs:
+  - source_dir: uploads/photos_channel
+    target_chat: "@some_public_channel"  # numeric chat ID also works
+    recursive: false                     # only uploads/photos_channel's top-level files
+  - source_dir: uploads/docs_archive
+    target_chat: -1001234567890
+    recursive: true                      # also uploads files in subfolders
+
+channels:
+
+  # --- Use case 1: "grab everything" archive channel -----------------------
+  # No media_types filter needed if you want photos + videos + documents
+  # (that's the default when media_types is omitted). Good for a general
+  # channel dump with no post-processing.
+  - id: "@some_public_channel"        # numeric chat ID also works, e.g. -1001234567890
+    name: general_dump                 # label used in logs / the dashboard
+    output_subdir: general_dump        # -> downloads/general_dump/
+
+  # --- Use case 2: documents-only archive (PDFs, ebooks, zips) -------------
+  # Restrict media_types so photos/videos in the same chat are skipped.
+  - id: -1001234567890
+    name: docs_archive
+    media_types: [document]
+    output_subdir: docs_archive        # -> downloads/docs_archive/
+
+  # --- Use case 3: audio channel WITHOUT audiobook post-processing ---------
+  # Just want the raw audio files with their original names, no ID3
+  # tagging/renaming/relocation? Leave audiobook_mode off (or omit it).
+  - id: "@some_music_or_podcast_channel"
+    name: podcast_raw
+    media_types: [audio, document]     # covers both Telegram "audio" and
+    output_subdir: podcast_raw         # file-attachment-style audio uploads
+
+  # --- Use case 4: audiobook channel WITH tagging + Plex-style layout ------
+  # audiobook_mode:true requires the metadata block (author + novel_title) —
+  # config loading fails fast if it's missing. output_subdir is just the
+  # local staging folder chapters land in before being tagged and moved to
+  # AUDIOBOOKS_DEST_DIR/{author}/{novel_title}/ (set in .env).
+  - id: "@some_audiobook_channel"
+    name: first_audiobook
+    media_types: [audio, document]
+    output_subdir: first_audiobook_staging
+    audiobook_mode: true
+    metadata:
+      author: "Some Author"
+      novel_title: "Some Novel"
+
+  # --- Use case 5: a second audiobook, same Plex root -----------------------
+  # Every audiobook_mode channel shares the one AUDIOBOOKS_DEST_DIR root
+  # from .env; each book gets sorted into its own author/title subfolder
+  # automatically, so multiple channels/books can point at the same root.
+  - id: -1009876543210
+    name: another_audiobook
+    media_types: [audio, document]
+    output_subdir: another_audiobook_staging
+    audiobook_mode: true
+    metadata:
+      author: "Some Other Author"
+      novel_title: "Some Other Novel"
+
+  # --- Use case 6: huge backlog channel, only want recent history ----------
+  # A channel with thousands of old messages you don't want to pull in
+  # full. min_date and max_messages can be used together or separately:
+  # min_date stops scanning once it reaches a message older than the date;
+  # max_messages caps how many of the channel's most recent messages are
+  # even fetched (ITelegramClient.IterMessagesAsync's `limit`), regardless
+  # of date.
+  - id: "@a_very_active_channel"
+    name: recent_only
+    output_subdir: recent_only
+    min_date: "2026-06-01"    # skip anything posted before this date
+    max_messages: 200         # ...and never look at more than the 200 newest
+
+  # --- Use case 7: auto-forward everything downloaded to another chat ------
+  # auto_upload_target immediately re-uploads each newly downloaded file to
+  # another chat right after it lands (and after audiobook tagging, if
+  # audiobook_mode is on). This is per-channel and independent of
+  # upload_jobs above; it uses the same upload dedup tracking, so re-runs
+  # never re-send a file that already went out.
+  - id: "@some_public_channel"
+    name: mirrored_channel
+    output_subdir: mirrored_channel
+    auto_upload_target: "@my_backup_channel"
+
+  # --- Use case 8: only grab a specific episode range -----------------------
+  # episode_range narrows a download to a window of episode numbers, read
+  # from each message's filename (Ep <n>, Ep <n>-<m> bundle, or a bare
+  # number/range like "100-251") -- e.g. "just re-grab episodes 20 through
+  # 25". A file whose episode number can't be confidently read is always
+  # downloaded (never silently skipped); a bundle file whose range overlaps
+  # the requested window at all is downloaded too.
+  - id: "@some_audiobook_channel"
+    name: first_audiobook_ep_20_to_25_only
+    media_types: [audio, document]
+    output_subdir: first_audiobook_reslice
+    episode_range:
+      start: 20
+      end: 25
+
+# --- Field reference ---------------------------------------------------
+# id             (required)  Telegram chat ID (int) or "@username" (str).
+# name           (required)  Human-readable label for logs/the dashboard.
+# output_subdir  (required)  Subfolder under download_root files land in
+#                             first. For audiobook_mode channels this is
+#                             just staging — files are moved out of it.
+# media_types    (optional)  Subset of [photo, video, document, audio].
+#                             Defaults to [photo, video, document].
+# min_date       (optional)  ISO-8601 date (e.g. "2026-06-01"). Messages
+#                             older than this are skipped; scanning stops
+#                             as soon as one older message is hit.
+# max_messages   (optional)  Cap on how many of the channel's most recent
+#                             messages are even fetched per run. Combine
+#                             with min_date for both a date floor and a
+#                             count cap on a channel with a big backlog.
+# auto_upload_target (optional) Chat ID/@username. If set, every file
+#                             downloaded from this channel is immediately
+#                             re-uploaded there (dedup-tracked, so re-runs
+#                             don't re-send). Independent of upload_jobs.
+# episode_range  (optional)  {start, end} inclusive episode-number window;
+#                             only files whose filename indicates an
+#                             episode number/range inside it are
+#                             downloaded. Unparseable filenames are always
+#                             downloaded (never silently skipped).
+# audiobook_mode (optional)  Default false. Enables tag+move post-processing.
+# metadata       (optional*) *Required when audiobook_mode: true.
+#                             author -> ID3/MP4 Artist/AlbumArtist.
+#                             novel_title -> Album + destination folder.
+#
+# upload_jobs (optional) List of {source_dir, target_chat, recursive} entries
+#             for upload mode; empty/omitted means upload mode has nothing
+#             to send. source_dir/target_chat are required per job;
+#             recursive defaults to false (top-level files only).
