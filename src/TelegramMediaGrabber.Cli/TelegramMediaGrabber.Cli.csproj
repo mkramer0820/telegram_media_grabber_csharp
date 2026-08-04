@@ -18,6 +18,7 @@
     <None Include="..\..\config\channels.example.yaml" CopyToPublishDirectory="PreserveNewest" Link="config\channels.example.yaml" />
     <None Include="..\..\README.md" CopyToPublishDirectory="PreserveNewest" Link="README.md" />
     <None Include="..\..\CONFIG.md" CopyToPublishDirectory="PreserveNewest" Link="CONFIG.md" />
+    <None Include="..\..\LICENSE" CopyToPublishDirectory="PreserveNewest" Link="LICENSE" />
   </ItemGroup>
 
   <ItemGroup>

@@ -86,6 +86,7 @@ $expectedInPublish = @(
     ".env.example",
     "README.md",
     "CONFIG.md",
+    "LICENSE",
     "config\channels.example.yaml"
 )
 $missing = $expectedInPublish | Where-Object { -not (Test-Path (Join-Path $publishDir $_)) }
@@ -104,7 +105,8 @@ $alwaysUpdate = @(
     "TelegramMediaGrabber.Cli.pdb",
     ".env.example",
     "README.md",
-    "CONFIG.md"
+    "CONFIG.md",
+    "LICENSE"
 )
 foreach ($name in $alwaysUpdate) {
     $source = Join-Path $publishDir $name

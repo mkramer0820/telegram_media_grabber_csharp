@@ -116,6 +116,22 @@ them once they do:
 Safe to run repeatedly against the same deploy folder for every new
 release.
 
+**Building a shareable release package** (e.g. for a GitHub Release, or
+to hand to someone else): use `scripts/build-release-package.ps1`
+instead. This is a different job from the deploy script above — it never
+touches any local deployment, and it can never contain your real
+`.env`/`config/channels.yaml`, only the `.env.example`/`config/channels.example.yaml`
+templates. It also actively refuses to package a real secret/config file
+if one is somehow found in the publish output, rather than silently
+including it:
+
+```powershell
+./scripts/build-release-package.ps1 -Version "v1.0"
+# -> dist/TelegramMediaGrabber-v1.0-win-x64.zip
+```
+
+`dist/` is gitignored — packages built here never get committed.
+
 The **real, distributable file** lands in
 `src/TelegramMediaGrabber.Cli/bin/Release/net9.0/<rid>/publish/TelegramMediaGrabber.Cli.exe`
 (tens of MB — it embeds the runtime). Publishing also leaves a much
