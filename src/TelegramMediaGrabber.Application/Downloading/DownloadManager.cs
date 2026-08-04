@@ -270,11 +270,12 @@ public sealed class DownloadManager
             {
                 try
                 {
-                    var info = ChapterResolution.Resolve(_parsingService, rawName, channel, _audiobooksDestDir);
+                    var effectiveDestDir = AudiobookNaming.EffectiveDestRoot(channel, _downloadRoot, _audiobooksDestDir);
+                    var info = ChapterResolution.Resolve(_parsingService, rawName, channel, effectiveDestDir);
                     if (info is not null)
                     {
                         resultPath = _audiobookProcessor.ApplyTagging(
-                            finalPath, info, channel.Metadata, _audiobooksDestDir);
+                            finalPath, info, channel.Metadata, effectiveDestDir, channel.MediaServerSubdir);
                     }
                 }
                 catch (Exception)

@@ -31,7 +31,7 @@ public sealed class VerifyCommand(
         foreach (var channel in channels)
         {
             console.MarkupLine($"Verifying [bold]{Markup.Escape(channel.Name)}[/]...");
-            totals += await service.RunChannelAsync(channel, audiobooksDestDir, report, cancellationToken);
+            totals += await service.RunChannelAsync(channel, options.DownloadRoot, audiobooksDestDir, report, cancellationToken);
         }
 
         console.MarkupLine($"[bold]Checked {totals.Checked}[/] file(s); {totals.Corrected} corrected, {totals.Errors} error(s).");

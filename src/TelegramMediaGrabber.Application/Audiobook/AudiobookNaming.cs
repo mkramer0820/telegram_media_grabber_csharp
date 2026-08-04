@@ -1,3 +1,4 @@
+using TelegramMediaGrabber.Application.Configuration;
 using TelegramMediaGrabber.Application.Files;
 using TelegramMediaGrabber.Domain;
 
@@ -7,15 +8,30 @@ namespace TelegramMediaGrabber.Application.Audiobook;
 public static class AudiobookNaming
 {
     /// <summary>
-    /// The book's destination directory: <c>destRoot/{author}/{novelTitle}</c>
-    /// (sanitized). Shared by <see cref="BuildDestinationPath"/> and
-    /// inference logic so both agree on exactly where a book's files live.
+    /// The destination root to actually use for one channel: its own
+    /// <c>{downloadRoot}/Audiobooks</c> if <see cref="ChannelOptions.LocalOnly"/>
+    /// is set, otherwise the configured <c>LOCAL_MEDIA_SERVER</c> value.
+    /// Centralized here so the download/reprocess/verify paths can't drift
+    /// out of sync on which channels stay local.
     /// </summary>
-    public static string BookDir(string destRoot, AudiobookMetadata metadata)
+    public static string EffectiveDestRoot(ChannelOptions channel, string downloadRoot, string configuredDestDir) =>
+        channel.LocalOnly ? Path.Combine(downloadRoot, "Audiobooks") : configuredDestDir;
+
+    /// <summary>
+    /// The book's destination directory: <c>destRoot/{novelTitle}</c>
+    /// (sanitized), or <c>destRoot/{subdirOverride}</c> if one is given —
+    /// deliberately no author-level folder (most people browse audiobooks
+    /// by title, not author; author stays in ID3/MP4 tags only, via
+    /// <see cref="AudiobookMetadata.Author"/>). Shared by
+    /// <see cref="BuildDestinationPath"/> and inference logic so both
+    /// agree on exactly where a book's files live.
+    /// </summary>
+    public static string BookDir(string destRoot, AudiobookMetadata metadata, string? subdirOverride = null)
     {
-        var authorDir = FilenameSanitizer.Sanitize(metadata.Author, fallbackStem: "Unknown Author");
-        var novelDir = FilenameSanitizer.Sanitize(metadata.NovelTitle, fallbackStem: "Unknown Title");
-        return Path.Combine(destRoot, authorDir, novelDir);
+        var dirName = FilenameSanitizer.Sanitize(
+            string.IsNullOrWhiteSpace(subdirOverride) ? metadata.NovelTitle : subdirOverride,
+            fallbackStem: "Unknown Title");
+        return Path.Combine(destRoot, dirName);
     }
 
     /// <summary>
@@ -33,7 +49,7 @@ public static class AudiobookNaming
     /// responsibility via <see cref="FilenameSanitizer.DedupSuffixedPath"/>.
     /// </summary>
     public static string BuildDestinationPath(
-        string destRoot, AudiobookMetadata metadata, ParseResult info, string extension)
+        string destRoot, AudiobookMetadata metadata, ParseResult info, string extension, string? subdirOverride = null)
     {
         var padded = info.Number.Padded;
         var baseName = info.Subtitle is { Length: > 0 } subtitle
@@ -41,6 +57,6 @@ public static class AudiobookNaming
             : $"{metadata.NovelTitle} - {info.Number.Label} {padded}{extension}";
 
         var filename = FilenameSanitizer.Sanitize(baseName);
-        return Path.Combine(BookDir(destRoot, metadata), filename);
+        return Path.Combine(BookDir(destRoot, metadata, subdirOverride), filename);
     }
 }

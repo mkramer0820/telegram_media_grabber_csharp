@@ -27,7 +27,8 @@ public sealed class VerifyService(ITelegramClient client, IStateRepository state
     private readonly IFilenameParser _parserChain = FilenameParserChain.Default;
 
     public async Task<VerifySummary> RunChannelAsync(
-        ChannelOptions channel, string audiobooksDestDir, IProgress<string>? report = null, CancellationToken cancellationToken = default)
+        ChannelOptions channel, string downloadRoot, string audiobooksDestDir,
+        IProgress<string>? report = null, CancellationToken cancellationToken = default)
     {
         if (channel.Metadata is null)
         {
@@ -60,7 +61,7 @@ public sealed class VerifyService(ITelegramClient client, IStateRepository state
             checkedCount++;
             try
             {
-                var newPath = await VerifyOneAsync(channel, entity.Id, messageId, filePath, message.DeriveFilename(), audiobooksDestDir, cancellationToken);
+                var newPath = await VerifyOneAsync(channel, entity.Id, messageId, filePath, message.DeriveFilename(), downloadRoot, audiobooksDestDir, cancellationToken);
                 if (newPath is not null)
                 {
                     corrected++;
@@ -79,7 +80,7 @@ public sealed class VerifyService(ITelegramClient client, IStateRepository state
 
     private async Task<string?> VerifyOneAsync(
         ChannelOptions channel, long chatId, int messageId, string filePath, string trueRawFilename,
-        string audiobooksDestDir, CancellationToken cancellationToken)
+        string downloadRoot, string audiobooksDestDir, CancellationToken cancellationToken)
     {
         var trueInfo = _parserChain.TryParse(trueRawFilename);
         if (trueInfo is null)
@@ -94,7 +95,8 @@ public sealed class VerifyService(ITelegramClient client, IStateRepository state
             return null;
         }
 
-        var newPath = audiobookProcessor.ApplyTagging(filePath, trueInfo, channel.Metadata!, audiobooksDestDir);
+        var effectiveDestDir = AudiobookNaming.EffectiveDestRoot(channel, downloadRoot, audiobooksDestDir);
+        var newPath = audiobookProcessor.ApplyTagging(filePath, trueInfo, channel.Metadata!, effectiveDestDir, channel.MediaServerSubdir);
         var contentHash = ContentHash.OfFile(newPath);
         await stateRepository.UpdateDownloadedFilePathAsync(chatId, messageId, newPath, contentHash, cancellationToken);
         return newPath;

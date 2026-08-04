@@ -338,4 +338,72 @@ public class DownloadManagerTests
             Directory.Delete(externalMediaServerDir, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task RunAsync_LocalOnlyChannel_StaysUnderDownloadRoot_IgnoresConfiguredDestDir()
+    {
+        var dir = CreateTempDir();
+        var externalMediaServerDir = CreateTempDir();
+        try
+        {
+            var entity = new TelegramEntity(42, "chan");
+            var message = new TelegramMessage(1, 42, DateTimeOffset.UtcNow, "5.mp3", true, false, false, false);
+            var client = new FakeTelegramClient(
+                entitiesById: new() { ["@chan"] = entity },
+                messagesToIterate: [message]);
+            var stateRepository = new FakeStateRepository();
+
+            var metadata = new AudiobookMetadata("Some Author", "Some Novel");
+            var channel = MakeChannel(audiobookMode: true, metadata: metadata) with
+            {
+                MediaTypes = [MediaType.Audio],
+                LocalOnly = true,
+            };
+            var manager = MakeManager(dir, client, stateRepository, audiobooksDestDir: externalMediaServerDir);
+            await manager.RunAsync([channel]);
+
+            var expectedPath = Path.Combine(
+                AudiobookNaming.BookDir(Path.Combine(dir, "Audiobooks"), metadata), "Some Novel - Ep 0005.mp3");
+            Assert.True(File.Exists(expectedPath));
+            Assert.Empty(Directory.GetFileSystemEntries(externalMediaServerDir));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+            Directory.Delete(externalMediaServerDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_MediaServerSubdirOverride_UsedInsteadOfNovelTitle()
+    {
+        var dir = CreateTempDir();
+        var externalMediaServerDir = CreateTempDir();
+        try
+        {
+            var entity = new TelegramEntity(42, "chan");
+            var message = new TelegramMessage(1, 42, DateTimeOffset.UtcNow, "5.mp3", true, false, false, false);
+            var client = new FakeTelegramClient(
+                entitiesById: new() { ["@chan"] = entity },
+                messagesToIterate: [message]);
+            var stateRepository = new FakeStateRepository();
+
+            var metadata = new AudiobookMetadata("Some Author", "Some Novel");
+            var channel = MakeChannel(audiobookMode: true, metadata: metadata) with
+            {
+                MediaTypes = [MediaType.Audio],
+                MediaServerSubdir = "Custom Folder Name",
+            };
+            var manager = MakeManager(dir, client, stateRepository, audiobooksDestDir: externalMediaServerDir);
+            await manager.RunAsync([channel]);
+
+            var expectedPath = Path.Combine(externalMediaServerDir, "Custom Folder Name", "Some Novel - Ep 0005.mp3");
+            Assert.True(File.Exists(expectedPath));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+            Directory.Delete(externalMediaServerDir, recursive: true);
+        }
+    }
 }

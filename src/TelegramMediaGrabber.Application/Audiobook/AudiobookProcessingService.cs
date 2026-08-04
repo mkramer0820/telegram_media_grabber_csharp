@@ -68,13 +68,14 @@ public sealed partial class AudiobookProcessingService(IAudiobookTagger tagger)
     /// if the natural destination name is already taken by a different
     /// file — AGENTS.md §3.4: never overwrite).
     /// </returns>
-    public string ApplyTagging(string filePath, ParseResult info, AudiobookMetadata metadata, string destRoot)
+    public string ApplyTagging(
+        string filePath, ParseResult info, AudiobookMetadata metadata, string destRoot, string? mediaServerSubdir = null)
     {
         tagger.Tag(filePath, metadata, info);
 
         var extension = Path.GetExtension(filePath);
         var destination = FilenameSanitizer.DedupSuffixedPath(
-            AudiobookNaming.BuildDestinationPath(destRoot, metadata, info, extension));
+            AudiobookNaming.BuildDestinationPath(destRoot, metadata, info, extension, mediaServerSubdir));
 
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         MoveAcrossVolumes(filePath, destination);

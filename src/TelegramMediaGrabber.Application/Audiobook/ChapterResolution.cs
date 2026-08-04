@@ -31,7 +31,7 @@ public static class ChapterResolution
         }
 
         var overrides = channel.Overrides.Count > 0 ? new ChannelOverrideLookup(channel.Overrides) : null;
-        var bookDir = AudiobookNaming.BookDir(audiobooksDestDir, channel.Metadata);
+        var bookDir = AudiobookNaming.BookDir(audiobooksDestDir, channel.Metadata, channel.MediaServerSubdir);
 
         return parsingService.Resolve(
             rawFilename,

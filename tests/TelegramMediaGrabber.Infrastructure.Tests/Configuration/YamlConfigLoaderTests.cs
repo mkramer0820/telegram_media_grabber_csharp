@@ -31,7 +31,7 @@ public sealed class YamlConfigLoaderTests
 
         Assert.Equal("downloads", options.DownloadRoot);
         Assert.Equal(5, options.MaxConcurrentDownloads);
-        Assert.Equal(8, options.Channels.Count);
+        Assert.Equal(9, options.Channels.Count);
         Assert.Equal(2, options.UploadJobs.Count);
 
         var audiobookChannel = Assert.Single(options.Channels, c => c.Name == "first_audiobook");
@@ -55,6 +55,10 @@ public sealed class YamlConfigLoaderTests
         Assert.NotNull(episodeFiltered.EpisodeRange);
         Assert.Equal(20, episodeFiltered.EpisodeRange!.Start);
         Assert.Equal(25, episodeFiltered.EpisodeRange.End);
+
+        var localOnly = Assert.Single(options.Channels, c => c.Name == "kept_local_only");
+        Assert.True(localOnly.LocalOnly);
+        Assert.Equal("Custom Folder Name", localOnly.MediaServerSubdir);
     }
 
     [Fact]

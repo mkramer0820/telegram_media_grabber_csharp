@@ -31,7 +31,7 @@ public sealed class YamlConfigLoader
     private static readonly string[] ChannelKeys =
     {
         "id", "name", "media_types", "output_subdir", "min_date", "max_messages", "auto_upload_target",
-        "episode_range", "audiobook_mode", "metadata", "overrides",
+        "episode_range", "audiobook_mode", "metadata", "overrides", "local_only", "media_server_subdir",
     };
 
     private static readonly string[] MetadataKeys = { "author", "novel_title" };
@@ -96,10 +96,12 @@ public sealed class YamlConfigLoader
         var audiobookMode = GetBool(map, "audiobook_mode") ?? false;
         var metadata = ParseMetadata(map, name);
         var overrides = GetList(map, "overrides").Select(o => ParseOverride(o, name)).ToList();
+        var localOnly = GetBool(map, "local_only") ?? false;
+        var mediaServerSubdir = GetString(map, "media_server_subdir");
 
         return new ChannelOptions(
             id, name, mediaTypes, outputSubdir, minDate, audiobookMode, metadata, overrides,
-            maxMessages, autoUploadTarget, episodeRange);
+            maxMessages, autoUploadTarget, episodeRange, localOnly, mediaServerSubdir);
     }
 
     private static EpisodeRangeOptions? ParseEpisodeRange(IDictionary<string, object?> channelMap, string channelName)

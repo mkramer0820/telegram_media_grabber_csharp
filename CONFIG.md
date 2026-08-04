@@ -44,7 +44,9 @@ Each entry under `channels:`:
 | `episode_range` | `{start, end}` | no | See [Episode range filtering](#episode-range-filtering) below. |
 | `auto_upload_target` | int or string | no | See [Auto-upload](#auto-upload) below. |
 | `audiobook_mode` | bool | no | Default `false`. Enables tag + relocate post-processing. |
-| `metadata` | `{author, novel_title}` | required iff `audiobook_mode: true` | `author` → Artist/AlbumArtist tag. `novel_title` → Album tag and destination folder name. |
+| `metadata` | `{author, novel_title}` | required iff `audiobook_mode: true` | `author` → Artist/AlbumArtist tag **only** (never part of the destination path). `novel_title` → Album tag **and** destination folder name, unless `media_server_subdir` overrides it. |
+| `local_only` | bool | no | Default `false`. If true, tag/relocate under this app's own `download_root/Audiobooks` instead of `LOCAL_MEDIA_SERVER`. See [Keeping a channel local](#keeping-a-channel-local) below. |
+| `media_server_subdir` | string | no | Exact destination folder name to use instead of deriving one from `novel_title`. Works with or without `local_only`. |
 | `overrides` | list of [Override](#per-file-overrides) | no | Per-file corrections for episode number/subtitle when the filename can't be parsed automatically, or is parsed wrong. |
 
 ### Episode range filtering
@@ -95,6 +97,35 @@ mode never re-sends a file that already went out. It's independent of
   name: mirrored_channel
   output_subdir: mirrored_channel
   auto_upload_target: "@my_backup_channel"
+```
+
+### Keeping a channel local
+
+By default, an `audiobook_mode` channel's tagged files are relocated to
+`LOCAL_MEDIA_SERVER` (e.g. a Plex/Jellyfin library mount). `local_only: true`
+keeps the same tagging/organizing behavior but relocates under this app's
+own `download_root/Audiobooks` instead — for a channel you never want
+leaving this app's own folder tree (no external mount configured, or you
+just don't want this particular book synced to your media server).
+
+The destination layout is always `{dest_root}/{novel_title}/...` —
+**there's deliberately no author-level folder**, since most people browse
+audiobooks by title, not author. Author stays in the ID3/MP4
+Artist/AlbumArtist tags only. If you want a different folder name than
+the title (or need to match an existing library's naming), set
+`media_server_subdir` to the exact folder name to use — it works whether
+or not `local_only` is set.
+
+```yaml
+- id: "@another_audiobook_channel"
+  name: kept_local_only
+  output_subdir: kept_local_staging
+  audiobook_mode: true
+  local_only: true
+  media_server_subdir: "Custom Folder Name"
+  metadata:
+    author: "Some Author"
+    novel_title: "Some Novel"
 ```
 
 ### Per-file overrides

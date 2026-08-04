@@ -49,7 +49,7 @@ public sealed class ReprocessService(IStateRepository stateRepository, Audiobook
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    var (newPath, hadRecord) = await ReprocessOneAsync(channel, filePath, audiobooksDestDir, cancellationToken);
+                    var (newPath, hadRecord) = await ReprocessOneAsync(channel, filePath, downloadRoot, audiobooksDestDir, cancellationToken);
                     if (hadRecord)
                     {
                         processed++;
@@ -74,14 +74,15 @@ public sealed class ReprocessService(IStateRepository stateRepository, Audiobook
     }
 
     private async Task<(string NewPath, bool HadRecord)> ReprocessOneAsync(
-        ChannelOptions channel, string filePath, string audiobooksDestDir, CancellationToken cancellationToken)
+        ChannelOptions channel, string filePath, string downloadRoot, string audiobooksDestDir, CancellationToken cancellationToken)
     {
         var record = await stateRepository.FindDownloadedRecordByPathAsync(filePath, cancellationToken);
 
-        var info = ChapterResolution.Resolve(parsingService, Path.GetFileName(filePath), channel, audiobooksDestDir)
+        var effectiveDestDir = AudiobookNaming.EffectiveDestRoot(channel, downloadRoot, audiobooksDestDir);
+        var info = ChapterResolution.Resolve(parsingService, Path.GetFileName(filePath), channel, effectiveDestDir)
             ?? throw new InvalidOperationException($"Override for '{filePath}' skips this file; it should not have been scanned.");
 
-        var newPath = audiobookProcessor.ApplyTagging(filePath, info, channel.Metadata!, audiobooksDestDir);
+        var newPath = audiobookProcessor.ApplyTagging(filePath, info, channel.Metadata!, effectiveDestDir, channel.MediaServerSubdir);
 
         if (record is null)
         {

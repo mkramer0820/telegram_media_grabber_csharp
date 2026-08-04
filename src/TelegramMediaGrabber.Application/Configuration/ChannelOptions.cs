@@ -19,6 +19,26 @@ namespace TelegramMediaGrabber.Application.Configuration;
 /// <param name="AudiobookMode">If true, downloaded audio is tagged/relocated.</param>
 /// <param name="Metadata">Required when <paramref name="AudiobookMode"/> is true.</param>
 /// <param name="Overrides">Per-file metadata overrides for this channel.</param>
+/// <param name="LocalOnly">
+/// If true, an <paramref name="AudiobookMode"/> channel is still
+/// tagged/organized, but relocated under this app's own
+/// <c>{download_root}/Audiobooks/{novel_title}/</c> instead of the
+/// configured <c>LOCAL_MEDIA_SERVER</c> destination — for a channel you
+/// want tagged output from without it ever leaving this app's own folder
+/// tree (e.g. no external media-server mount configured, or you
+/// deliberately don't want this particular book sent there). No effect
+/// on non-audiobook_mode channels, which already stay local.
+/// </param>
+/// <param name="MediaServerSubdir">
+/// If set, used as the exact destination subfolder name (under whichever
+/// root applies per <see cref="LocalOnly"/>) instead of deriving one from
+/// <c>metadata.novel_title</c> — e.g. to pick a different folder name
+/// than the title, or to keep an existing library layout. Author is
+/// never part of the destination path (kept in ID3/MP4 tags only, via
+/// <c>metadata.author</c>) — most people organize/browse audiobooks by
+/// title, not author, so the default layout is
+/// <c>{dest_root}/{novel_title}/...</c>, no author-level folder.
+/// </param>
 public sealed record ChannelOptions(
     string Id,
     string Name,
@@ -30,7 +50,9 @@ public sealed record ChannelOptions(
     IReadOnlyList<OverrideEntry> Overrides,
     int? MaxMessages = null,
     string? AutoUploadTarget = null,
-    EpisodeRangeOptions? EpisodeRange = null)
+    EpisodeRangeOptions? EpisodeRange = null,
+    bool LocalOnly = false,
+    string? MediaServerSubdir = null)
 {
     /// <summary>Fails fast on invalid combinations — mirrors the Python model_validator (AGENTS.md §7).</summary>
     public void Validate()

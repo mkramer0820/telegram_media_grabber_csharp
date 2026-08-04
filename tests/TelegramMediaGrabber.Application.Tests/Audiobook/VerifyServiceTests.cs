@@ -49,7 +49,7 @@ public class VerifyServiceTests
 
             var service = new VerifyService(client, stateRepository, new AudiobookProcessingService(new FakeAudiobookTagger()));
 
-            var summary = await service.RunChannelAsync(channel, destRoot);
+            var summary = await service.RunChannelAsync(channel, dir, destRoot);
 
             Assert.Equal(new VerifySummary(1, 1, 0), summary);
             Assert.False(File.Exists(wrongPath));
@@ -88,7 +88,7 @@ public class VerifyServiceTests
 
             var service = new VerifyService(client, stateRepository, new AudiobookProcessingService(new FakeAudiobookTagger()));
 
-            var summary = await service.RunChannelAsync(channel, destRoot);
+            var summary = await service.RunChannelAsync(channel, dir, destRoot);
 
             Assert.Equal(new VerifySummary(1, 0, 0), summary);
             Assert.True(File.Exists(correctPath));
@@ -124,7 +124,7 @@ public class VerifyServiceTests
 
             var service = new VerifyService(client, stateRepository, new AudiobookProcessingService(new FakeAudiobookTagger()));
 
-            var summary = await service.RunChannelAsync(channel, destRoot);
+            var summary = await service.RunChannelAsync(channel, dir, destRoot);
 
             Assert.Equal(new VerifySummary(1, 0, 0), summary);
             Assert.True(File.Exists(existingPath));
@@ -156,7 +156,7 @@ public class VerifyServiceTests
 
             var service = new VerifyService(client, stateRepository, new AudiobookProcessingService(new FakeAudiobookTagger()));
 
-            var summary = await service.RunChannelAsync(channel, destRoot);
+            var summary = await service.RunChannelAsync(channel, dir, destRoot);
 
             Assert.Equal(new VerifySummary(0, 0, 0), summary);
         }
