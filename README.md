@@ -99,6 +99,23 @@ so there would make even a plain `dotnet build`/IDE build emit a second,
 RID-specific apphost stub alongside the normal build output, which is
 confusing and not the deliverable).
 
+**Deploying a new build without losing your session/state**: use
+`scripts/publish-release.ps1` instead of copying `dotnet publish`'s output
+by hand. A plain re-publish + copy silently overwrites `data/downloader.session`,
+`data/state.db`, `.env`, and `config/channels.yaml` every time, forcing a
+fresh Telegram login and losing all download/upload history. The script
+never touches any of those (or `logs/`/`downloads/`/`uploads/`) — it only
+ever refreshes the `.exe` and reference docs, and seeds `.env`/`config/channels.yaml`
+on a brand-new deployment where they don't exist yet, never overwriting
+them once they do:
+
+```powershell
+./scripts/publish-release.ps1 -DeployDir "D:\wherever\you\keep\this"
+```
+
+Safe to run repeatedly against the same deploy folder for every new
+release.
+
 The **real, distributable file** lands in
 `src/TelegramMediaGrabber.Cli/bin/Release/net9.0/<rid>/publish/TelegramMediaGrabber.Cli.exe`
 (tens of MB — it embeds the runtime). Publishing also leaves a much
