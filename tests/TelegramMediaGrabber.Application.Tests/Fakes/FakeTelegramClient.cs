@@ -46,6 +46,12 @@ public sealed class FakeTelegramClient : ITelegramClient
         return Task.FromResult(fallback);
     }
 
+    /// <summary>Entities <see cref="TryResolveByTitleAsync"/> can find, keyed by exact title.</summary>
+    public Dictionary<string, TelegramEntity> EntitiesByTitle { get; init; } = [];
+
+    public Task<TelegramEntity?> TryResolveByTitleAsync(string title, CancellationToken cancellationToken = default) =>
+        Task.FromResult(EntitiesByTitle.TryGetValue(title, out var entity) ? entity : null);
+
     public async IAsyncEnumerable<TelegramMessage> IterMessagesAsync(
         TelegramEntity entity, int minId = 0, int? limit = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {

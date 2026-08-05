@@ -195,7 +195,7 @@ async Task RunOnceAsync()
             await new WatchCommand(client, stateRepository, tagger, options, audiobooksDestDir, console).RunAsync(cts.Token);
             break;
         case "resolve-ids":
-            await new ResolveIdsCommand(client, stateRepository, options, console).RunAsync(cts.Token);
+            await new ResolveIdsCommand(client, stateRepository, options, console, cliOptions.Write, channelsConfigPath).RunAsync(cts.Token);
             break;
         case "download":
             await new DownloadCommand(client, stateRepository, tagger, options, audiobooksDestDir, console).RunAsync(cts.Token);

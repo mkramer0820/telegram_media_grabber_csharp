@@ -15,7 +15,15 @@ namespace TelegramMediaGrabber.Cli;
 /// continuously on their own (<c>run</c>'s upload loop is paced by
 /// config's <c>upload_interval_seconds</c> instead).
 /// </param>
-public sealed record CliOptions(string Mode, int? IntervalSeconds)
+/// <param name="Write">
+/// Only meaningful with <c>--mode resolve-ids</c>: rewrites
+/// <c>config/channels.yaml</c> in place with the permanent numeric chat ID
+/// for every channel whose configured value (username/link) resolved to
+/// something different, recording the original value in a trailing
+/// comment on that line so it stays traceable. See
+/// <c>ResolveIdsCommand</c>.
+/// </param>
+public sealed record CliOptions(string Mode, int? IntervalSeconds, bool Write = false)
 {
     private static readonly string[] ValidModes = ["run", "download", "upload", "reprocess", "verify", "watch", "resolve-ids"];
 
@@ -24,6 +32,7 @@ public sealed record CliOptions(string Mode, int? IntervalSeconds)
     {
         var mode = "run";
         int? intervalSeconds = null;
+        var write = false;
         for (var i = 0; i < args.Length; i++)
         {
             if (args[i] is "--mode" && i + 1 < args.Length)
@@ -41,6 +50,10 @@ public sealed record CliOptions(string Mode, int? IntervalSeconds)
                 intervalSeconds = seconds;
                 i++;
             }
+            else if (args[i] is "--write")
+            {
+                write = true;
+            }
         }
 
         if (!ValidModes.Contains(mode, StringComparer.OrdinalIgnoreCase))
@@ -49,6 +62,6 @@ public sealed record CliOptions(string Mode, int? IntervalSeconds)
                 $"Unknown --mode '{mode}'. Expected one of: {string.Join(", ", ValidModes)}.");
         }
 
-        return new CliOptions(mode.ToLowerInvariant(), intervalSeconds);
+        return new CliOptions(mode.ToLowerInvariant(), intervalSeconds, write);
     }
 }

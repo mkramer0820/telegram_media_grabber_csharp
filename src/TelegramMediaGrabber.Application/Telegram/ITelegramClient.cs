@@ -22,6 +22,16 @@ public interface ITelegramClient : IAsyncDisposable
     Task<TelegramEntity> ResolveEntityAsync(string chatIdOrUsername, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Best-effort fallback for when a configured "@username" no longer
+    /// resolves (e.g. <c>USERNAME_NOT_OCCUPIED</c> after the channel
+    /// renamed itself) but the account is still a member: finds the chat
+    /// by an exact title match against this account's own joined-chat list
+    /// (<c>Messages_GetAllChats</c>). Never joins a channel. Returns null
+    /// if no exact title match is found.
+    /// </summary>
+    Task<TelegramEntity?> TryResolveByTitleAsync(string title, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Iterates a chat's messages newest-first, starting after <paramref name="minId"/>
     /// (exclusive) — mirrors Telethon's <c>iter_messages(min_id=..., limit=...)</c>
     /// semantics. <paramref name="limit"/>, if set, caps the total number of

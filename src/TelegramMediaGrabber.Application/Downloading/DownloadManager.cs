@@ -105,7 +105,25 @@ public sealed class DownloadManager
         var byChatId = new Dictionary<long, (ChannelOptions Channel, TelegramEntity Entity, string OutputDir, int Watermark)>();
         foreach (var channel in channels)
         {
-            var entity = await _client.ResolveEntityAsync(channel.Id, cancellationToken);
+            // One channel that no longer resolves (renamed/deleted username,
+            // revoked invite link, etc.) must not stop every other channel
+            // from being watched -- report and skip it instead, same as
+            // ProcessChannelAsync below.
+            TelegramEntity entity;
+            try
+            {
+                entity = await _client.ResolveEntityAsync(channel.Id, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exc)
+            {
+                _reporter.OnFileError(channel.Name, 0, $"channel resolve failed: {exc.Message}");
+                continue;
+            }
+
             var outputDir = Path.Combine(_downloadRoot, channel.OutputSubdir);
             Directory.CreateDirectory(outputDir);
             var watermark = await _stateRepository.GetLastMessageIdAsync(entity.Id, cancellationToken) ?? 0;
@@ -136,7 +154,28 @@ public sealed class DownloadManager
 
     private async Task ProcessChannelAsync(ChannelOptions channel, CancellationToken cancellationToken)
     {
-        var entity = await _client.ResolveEntityAsync(channel.Id, cancellationToken);
+        // RunAsync fans this out across every configured channel via
+        // Task.WhenAll; without this try/catch, one channel with a bad
+        // username/ID (renamed, deleted, typo'd -- e.g. Telegram's
+        // USERNAME_NOT_OCCUPIED) throws past Task.WhenAll and crashes the
+        // whole batch, taking every other channel down with it. Report and
+        // skip instead, matching how AutoUploadAsync/DownloadOneAsync
+        // isolate their own failures via _reporter.
+        TelegramEntity entity;
+        try
+        {
+            entity = await _client.ResolveEntityAsync(channel.Id, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exc)
+        {
+            _reporter.OnFileError(channel.Name, 0, $"channel resolve failed: {exc.Message}");
+            return;
+        }
+
         var chatId = entity.Id;
         var lastMessageId = await _stateRepository.GetLastMessageIdAsync(chatId, cancellationToken) ?? 0;
         var minDate = channel.MinDate is { } date

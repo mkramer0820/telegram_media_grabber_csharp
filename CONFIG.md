@@ -207,11 +207,51 @@ resolve-ids`. It resolves every configured `id`/`target_chat` (however
 it's written) and prints each one's permanent numeric ID, title,
 username, and kind — and caches that in the state database for later
 reference (`IStateRepository.CacheResolvedEntityAsync`), independent of
-the config file. It's read-only: nothing gets written back into
-`config/channels.yaml` automatically (a naive rewrite risks destroying
-your comments/formatting), so paste a numeric ID in by hand if you want a
-given entry to stop depending on a username/link that could change or
-expire later.
+the config file. By default it's read-only, so paste a numeric ID in by
+hand if you want a given entry to stop depending on a username/link that
+could change or expire later — or see the next section for automatic
+recovery/rewrite.
+
+### When a channel's username changes: `--mode resolve-ids --write`
+
+Some public channels (especially reposted/aggregator content) periodically
+rename their `@username`, which breaks any config entry still written as
+that username — Telegram returns `USERNAME_NOT_OCCUPIED` and, without
+recovery, that one bad entry would previously take down the whole batch.
+Two things guard against this:
+
+1. **Per-channel isolation**: a resolve failure for one channel is now
+   caught and reported (like any other per-file error) instead of crashing
+   the entire run — every other configured channel still processes
+   normally. Check the dashboard/`logs/app.log` for which channel needs
+   attention.
+2. **Auto-recovery + config rewrite**: run `--mode resolve-ids --write`.
+   For any channel with `audiobook_mode`/`metadata.novel_title` set, a
+   failed username resolve automatically falls back to an exact title
+   match against your account's own joined-chat list — no guessing at the
+   new username required, and it never joins a channel on your behalf. Any
+   entry (recovered this way, or already resolving fine) whose configured
+   `id` differs from its permanent numeric chat ID gets that `id:` line
+   rewritten in `config/channels.yaml` to the numeric ID, with the
+   original value preserved in a trailing comment for traceability, e.g.:
+
+   ```yaml
+   id: "3679792134"  # was "bloodwarlockxfm77" (renamed) -- pinned to permanent chat ID by --write on 2026-08-05
+   ```
+
+   This is a targeted per-line text replace, not a full YAML round-trip —
+   the rest of the file's comments/formatting are left untouched, and any
+   line it can't uniquely match (e.g. `upload_jobs.target_chat`, which
+   uses a different field name than `id:`) is left alone and reported
+   rather than guessed at. Pinning to the numeric ID also means the *next*
+   rename of that channel won't break it again, since the numeric chat ID
+   never changes even when the username does.
+
+   A channel with no `metadata.novel_title` (not `audiobook_mode`) that
+   fails to resolve has no title to fall back on — it's reported as failed
+   and needs a manual fix (find the new username/link and update the
+   config, or use `--mode resolve-ids` on a corrected value to confirm it
+   before saving).
 
 **Finding a private channel/group's numeric ID manually:**
 

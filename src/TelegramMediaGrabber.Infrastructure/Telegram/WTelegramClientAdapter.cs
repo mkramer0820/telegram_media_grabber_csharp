@@ -224,8 +224,8 @@ public sealed class WTelegramClientAdapter : ITelegramClient
         }
     }
 
-    /// <summary>Best-effort fallback: finds a chat in the account's own joined-chat list by exact title match.</summary>
-    private async Task<TelegramEntity?> TryResolveByTitleAsync(string title, CancellationToken cancellationToken)
+    /// <inheritdoc/>
+    public async Task<TelegramEntity?> TryResolveByTitleAsync(string title, CancellationToken cancellationToken = default)
     {
         var allChats = await FloodWaitRetry.ExecuteAsync(
             () => _client.Messages_GetAllChats(),
