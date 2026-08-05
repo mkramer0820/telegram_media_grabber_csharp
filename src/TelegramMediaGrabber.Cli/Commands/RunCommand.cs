@@ -43,26 +43,39 @@ public sealed class RunCommand(
 {
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
+        console.MarkupLine($"[bold]{options.Channels.Count}[/] channel(s) configured:");
+        foreach (var channel in options.Channels)
+        {
+            console.MarkupLine($"  - {Markup.Escape(channel.Name)}");
+        }
+
         var audiobookProcessor = new AudiobookProcessingService(tagger);
         var parsingService = new ChapterParsingService();
-        var manager = new DownloadManager(
-            client, stateRepository, audiobookProcessor, parsingService,
-            options.DownloadRoot, options.MaxConcurrentDownloads, reporter: null, audiobooksDestDir: audiobooksDestDir);
 
-        console.MarkupLine($"Catching up on [bold]{options.Channels.Count}[/] channel(s)...");
-        await manager.RunAsync(options.Channels, cancellationToken);
+        await console.Live(new Markup("Starting...")).StartAsync(async ctx =>
+        {
+            var dashboard = new DownloadDashboard(ctx);
+            dashboard.SeedChannels(options.Channels.Select(c => c.Name));
 
-        var uploadNote = options.UploadJobs.Count > 0
-            ? $" Re-scanning [bold]{options.UploadJobs.Count}[/] upload job(s) every {options.UploadIntervalSeconds}s."
-            : string.Empty;
-        console.MarkupLine($"[green]Caught up.[/] Watching for new messages.{uploadNote} Press Ctrl+C to stop.");
+            var manager = new DownloadManager(
+                client, stateRepository, audiobookProcessor, parsingService,
+                options.DownloadRoot, options.MaxConcurrentDownloads, dashboard, audiobooksDestDir);
 
-        var watchTask = manager.WatchAsync(options.Channels, cancellationToken);
-        var uploadTask = options.UploadJobs.Count > 0
-            ? RunUploadLoopAsync(cancellationToken)
-            : Task.CompletedTask;
+            dashboard.Note("[dim]Catching up on channel backlog...[/]");
+            await manager.RunAsync(options.Channels, cancellationToken);
 
-        await Task.WhenAll(watchTask, uploadTask);
+            var uploadNote = options.UploadJobs.Count > 0
+                ? $" Re-scanning {options.UploadJobs.Count} upload job(s) every {options.UploadIntervalSeconds}s."
+                : string.Empty;
+            dashboard.Note($"[green]Caught up.[/] Watching for new messages.{uploadNote}");
+
+            var watchTask = manager.WatchAsync(options.Channels, cancellationToken);
+            var uploadTask = options.UploadJobs.Count > 0
+                ? RunUploadLoopAsync(dashboard, cancellationToken)
+                : Task.CompletedTask;
+
+            await Task.WhenAll(watchTask, uploadTask);
+        });
     }
 
     /// <summary>
@@ -70,9 +83,13 @@ public sealed class RunCommand(
     /// upload</c> pass) every <see cref="ChannelsOptions.UploadIntervalSeconds"/>,
     /// starting with an immediate first pass rather than waiting out the
     /// first interval. Only runs at all if <see cref="ChannelsOptions.UploadJobs"/>
-    /// is non-empty (checked by the caller).
+    /// is non-empty (checked by the caller). Announcements go through
+    /// <paramref name="dashboard"/>'s activity feed rather than a direct
+    /// console write -- this runs concurrently with the watch loop's own
+    /// live dashboard, and a plain console write during an active
+    /// <c>AnsiConsole.Live</c> session would corrupt it (AGENTS.md §4.2).
     /// </summary>
-    private async Task RunUploadLoopAsync(CancellationToken cancellationToken)
+    private async Task RunUploadLoopAsync(DownloadDashboard dashboard, CancellationToken cancellationToken)
     {
         var manager = new UploadManager(client, stateRepository);
         while (!cancellationToken.IsCancellationRequested)
@@ -84,7 +101,7 @@ public sealed class RunCommand(
                 // configured folders, not just new ones -- ProcessQueueAsync
                 // dedup-skips anything already marked uploaded, so this is
                 // an upper bound on what actually gets sent this pass.
-                console.MarkupLine($"[dim]Upload scan: {queue.Count} file(s) found, checking for new ones...[/]");
+                dashboard.Note($"[dim]Upload scan: {queue.Count} file(s) found, checking for new ones...[/]");
                 await manager.ProcessQueueAsync(queue, cancellationToken);
             }
 

@@ -5,38 +5,179 @@ using TelegramMediaGrabber.Application.Progress;
 namespace TelegramMediaGrabber.Cli.Ui;
 
 /// <summary>
-/// Live Spectre.Console dashboard for download mode. Implements
+/// Live Spectre.Console dashboard for download/watch mode. Implements
 /// <see cref="IDownloadProgressReporter"/> so it can be handed directly to
 /// <c>DownloadManager</c> without the Application layer ever referencing
 /// Spectre.Console (AGENTS.md §1.3 / §4.1 dependency direction).
 /// </summary>
+/// <remarks>
+/// Earlier version kept only one shared "current activity" line for every
+/// channel combined -- with several channels downloading concurrently
+/// (<c>max_concurrent_downloads</c>), that line was overwritten many times
+/// a second, so a file completion or a channel-resolve error was visible
+/// for a fraction of a second before the next channel's update erased it.
+/// This version tracks live status per channel (so concurrent channels
+/// don't stomp on each other) and keeps a bounded, retained feed of recent
+/// completions/errors instead of a single overwritten line, so nothing
+/// flashes past unseen.
+/// </remarks>
 public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadProgressReporter
 {
-    private readonly Dictionary<string, ChannelProgress> _channelRows = [];
-    private string _statusLine = "";
+    private const int MaxActivityLines = 12;
+
+    private sealed class ChannelState
+    {
+        public int Scanned;
+        public int Downloaded;
+        public bool Done;
+        public string? CurrentFile;
+        public double CurrentPercent;
+        public int ErrorCount;
+        public string? LastError;
+    }
+
+    private readonly Dictionary<string, ChannelState> _channels = [];
+    private readonly LinkedList<string> _recentActivity = new();
+
+    /// <summary>Registers every configured channel up front (Scanned=0, not started) so the table shows the full list immediately, not just channels that have already produced an event.</summary>
+    public void SeedChannels(IEnumerable<string> channelNames)
+    {
+        foreach (var name in channelNames)
+        {
+            _channels.TryAdd(name, new ChannelState());
+        }
+
+        Refresh();
+    }
+
+    /// <summary>Pushes a one-off line into the retained activity feed (e.g. upload-loop scan announcements in <c>RunCommand</c>) without disturbing per-channel state.</summary>
+    public void Note(string markup)
+    {
+        AddActivity(markup);
+        Refresh();
+    }
+
+    private ChannelState GetOrAddChannel(string chatName)
+    {
+        if (!_channels.TryGetValue(chatName, out var state))
+        {
+            state = new ChannelState();
+            _channels[chatName] = state;
+        }
+
+        return state;
+    }
+
+    private void AddActivity(string markup)
+    {
+        _recentActivity.AddFirst(markup);
+        while (_recentActivity.Count > MaxActivityLines)
+        {
+            _recentActivity.RemoveLast();
+        }
+    }
+
+    /// <summary>
+    /// Errors first, then still-in-progress channels, then done last —
+    /// so when the row budget (<see cref="Render"/>) can't fit everything,
+    /// what gets cut is the channels that need no further attention, never
+    /// the ones that do.
+    /// </summary>
+    private static int Priority(ChannelState state) => state.ErrorCount > 0 ? 0 : state.Done ? 2 : 1;
+
+    /// <summary>
+    /// Best-effort terminal height; a real console always reports one, but
+    /// this also runs (via <see cref="AnsiConsole.Live"/>) in contexts
+    /// without a proper console handle, where querying it can throw --
+    /// fall back to a conservative default rather than let that take the
+    /// whole dashboard down.
+    /// </summary>
+    private static int GetAvailableHeight()
+    {
+        try
+        {
+            var height = System.Console.WindowHeight;
+            return height > 0 ? height : 30;
+        }
+        catch
+        {
+            return 30;
+        }
+    }
 
     private IRenderable Render()
     {
+        var totalChannels = _channels.Count;
+        var doneChannels = _channels.Values.Count(c => c.Done);
+        var errorChannels = _channels.Values.Count(c => c.ErrorCount > 0);
+        var totalDownloaded = _channels.Values.Sum(c => c.Downloaded);
+
+        var summary = new Markup(
+            $"[bold]{totalChannels}[/] channel(s) — [green]{doneChannels} done[/], " +
+            $"[yellow]{totalChannels - doneChannels} in progress[/], [red]{errorChannels} with errors[/] — " +
+            $"[bold]{totalDownloaded}[/] file(s) downloaded so far");
+
+        // Table chrome (title/header/borders) is ~4 lines; the activity
+        // panel (if shown) adds its own line count plus ~3 for
+        // header/borders. Whatever's left after those and the summary
+        // line is how many channel rows can actually fit on screen.
+        var activityLines = Math.Min(_recentActivity.Count, MaxActivityLines);
+        var reserved = 1 + 4 + (activityLines > 0 ? activityLines + 3 : 0);
+        var maxChannelRows = Math.Max(3, GetAvailableHeight() - reserved);
+
+        var ordered = _channels
+            .OrderBy(kv => Priority(kv.Value))
+            .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var shown = ordered.Take(maxChannelRows).ToList();
+        var hidden = ordered.Skip(shown.Count).ToList();
+
         var table = new Table().Title("Channels").Expand();
         table.AddColumn("Channel");
         table.AddColumn(new TableColumn("Scanned").RightAligned());
         table.AddColumn(new TableColumn("Downloaded").RightAligned());
-        table.AddColumn(new TableColumn("Status").RightAligned());
+        table.AddColumn("Status");
+        table.AddColumn("Current");
 
-        foreach (var progress in _channelRows.Values)
+        foreach (var (name, state) in shown)
         {
-            var status = progress.Done ? "[green]done[/]" : "[yellow]scanning[/]";
-            table.AddRow(
-                Markup.Escape(progress.ChatName),
-                progress.MessagesScanned.ToString(),
-                progress.FilesDownloaded.ToString(),
-                status);
+            var status = state.ErrorCount > 0
+                ? $"[red]error ({state.ErrorCount})[/]"
+                : state.Done ? "[green]done[/]" : "[yellow]scanning[/]";
+
+            var current = state.CurrentFile is { } file
+                ? $"{Markup.Escape(file)} ({state.CurrentPercent:F0}%)"
+                : state.LastError is { } lastError
+                    ? $"[red]{Markup.Escape(lastError)}[/]"
+                    : "[dim]-[/]";
+
+            table.AddRow(Markup.Escape(name), state.Scanned.ToString(), state.Downloaded.ToString(), status, current);
         }
 
-        var rows = new List<IRenderable> { table };
-        if (_statusLine.Length > 0)
+        if (hidden.Count > 0)
         {
-            rows.Add(new Panel(_statusLine) { Border = BoxBorder.Rounded });
+            var hiddenErrors = hidden.Count(kv => kv.Value.ErrorCount > 0);
+            var hiddenInProgress = hidden.Count(kv => kv.Value.ErrorCount == 0 && !kv.Value.Done);
+            var hiddenDone = hidden.Count - hiddenErrors - hiddenInProgress;
+            var detail = hiddenErrors > 0 || hiddenInProgress > 0
+                ? $"{hiddenErrors} with errors, {hiddenInProgress} in progress, {hiddenDone} done"
+                : "all done, no errors";
+            var color = hiddenErrors > 0 ? "red" : hiddenInProgress > 0 ? "yellow" : "dim";
+            table.AddRow(
+                new Markup($"[{color}]+ {hidden.Count} more ({detail}) — window too short to show[/]"),
+                Text.Empty, Text.Empty, Text.Empty, Text.Empty);
+        }
+
+        var rows = new List<IRenderable> { summary, table };
+
+        if (_recentActivity.Count > 0)
+        {
+            var activity = new Panel(string.Join("\n", _recentActivity))
+            {
+                Header = new PanelHeader("Recent activity"),
+                Border = BoxBorder.Rounded,
+            };
+            rows.Add(activity);
         }
 
         return new Rows(rows);
@@ -51,31 +192,43 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
     public void OnFileProgress(FileProgress progress)
     {
         var percent = progress.BytesTotal > 0 ? 100.0 * progress.BytesDone / progress.BytesTotal : 0;
-        _statusLine = $"[cyan]{Markup.Escape(progress.ChatName)}[/] {Markup.Escape(progress.FileName)} ({percent:F0}%)";
+        var state = GetOrAddChannel(progress.ChatName);
+        state.CurrentFile = progress.FileName;
+        state.CurrentPercent = percent;
         Refresh();
     }
 
     public void OnFileComplete(string chatName, int messageId, string finalPath)
     {
-        _statusLine = $"[green]Saved:[/] {Markup.Escape(Path.GetFileName(finalPath))}";
+        var state = GetOrAddChannel(chatName);
+        state.CurrentFile = null;
+        AddActivity($"[green]✓[/] {Markup.Escape(chatName)}: {Markup.Escape(Path.GetFileName(finalPath))}");
         Refresh();
     }
 
     public void OnFileError(string chatName, int messageId, string error)
     {
-        _statusLine = $"[red]Failed[/] (chat={Markup.Escape(chatName)} message={messageId}): {Markup.Escape(error)}";
+        var state = GetOrAddChannel(chatName);
+        state.CurrentFile = null;
+        state.ErrorCount++;
+        state.LastError = error;
+        var location = messageId > 0 ? $"message {messageId}" : "channel";
+        AddActivity($"[red]✗[/] {Markup.Escape(chatName)} ({location}): {Markup.Escape(error)}");
         Refresh();
     }
 
     public void OnChannelProgress(ChannelProgress progress)
     {
-        _channelRows[progress.ChatName] = progress;
+        var state = GetOrAddChannel(progress.ChatName);
+        state.Scanned = progress.MessagesScanned;
+        state.Downloaded = progress.FilesDownloaded;
+        state.Done = progress.Done;
         Refresh();
     }
 
     public void OnFloodWait(double seconds)
     {
-        _statusLine = $"[yellow]FloodWait: pausing {seconds:F1}s[/]";
+        AddActivity($"[yellow]FloodWait: pausing {seconds:F1}s[/]");
         Refresh();
     }
 }

@@ -166,8 +166,13 @@ be launched from) — so as long as those example files stay next to the
 of whether you run it by double-clicking, from a terminal, or via a
 scheduled task with some other working directory. Running it with no
 `.env` set up yet, or one still holding the example's placeholder values,
-prints exactly what to do instead of a raw error — no source access or
-prior context needed.
+prompts for `TG_API_ID`/`TG_API_HASH`/`TG_PHONE` right there in the
+console (with a link to `https://my.telegram.org` for anyone who doesn't
+have API credentials yet) and writes `.env` for you, so a first-time user
+with only the `.exe` is set up in one sitting — no manual file editing,
+no source access, no prior context needed. Only falls back to printing
+static instructions instead (and exits) when it can't prompt at all, e.g.
+launched with redirected/piped input such as a scheduled task.
 
 See **`CONFIG.md`** for the full `config/channels.yaml` field reference,
 including private-channel chat ID resolution. Logs go to `logs/app.log`

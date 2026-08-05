@@ -147,7 +147,12 @@ public sealed class DownloadManager
                 continue;
             }
 
-            await DownloadOneAsync(channel, entity.Id, entity, message, outputDir, cancellationToken);
+            // Unlike ProcessChannelAsync's concurrent batch, watch delivers
+            // messages one at a time in true arrival order already, so
+            // per-file inference (preResolvedChapters: null) is already
+            // race-free and already chronological -- no batch resolution
+            // needed here.
+            await DownloadOneAsync(channel, entity.Id, entity, message, outputDir, preResolvedChapters: null, cancellationToken);
             await _stateRepository.SetLastMessageIdAsync(entity.Id, message.Id, cancellationToken);
         }
     }
@@ -188,7 +193,7 @@ public sealed class DownloadManager
         var scanned = 0;
         var downloaded = 0;
         var highestSeen = lastMessageId;
-        var tasks = new List<Task>();
+        var newMessages = new List<TelegramMessage>();
 
         // Telegram's default iteration order is newest-message-first, so
         // message.Date is monotonically non-increasing as we iterate:
@@ -225,11 +230,33 @@ public sealed class DownloadManager
                 continue;
             }
 
-            tasks.Add(DownloadOneAsync(channel, chatId, entity, message, outputDir, cancellationToken));
+            newMessages.Add(message);
             downloaded++;
 
             _reporter.OnChannelProgress(new ChannelProgress(channel.Name, scanned, downloaded, Done: false));
         }
+
+        // Chapter numbers for untitled/unparsed files must be assigned in
+        // upload order, not in the newest-first order just scanned above
+        // and not in whatever order concurrent downloads happen to finish
+        // — see ChapterResolution.ResolveBatch. Resolved once, up front,
+        // for the whole batch; DownloadOneAsync below just looks up its
+        // message's already-decided result instead of recomputing it.
+        IReadOnlyDictionary<int, ParseResult?>? preResolvedChapters = null;
+        if (channel.AudiobookMode && channel.Metadata is not null && newMessages.Count > 0)
+        {
+            var chronological = newMessages
+                .AsEnumerable()
+                .Reverse()
+                .Select(m => (m.Id, m.DeriveFilename()))
+                .ToList();
+            var effectiveDestDir = AudiobookNaming.EffectiveDestRoot(channel, _downloadRoot, _audiobooksDestDir);
+            preResolvedChapters = ChapterResolution.ResolveBatch(_parsingService, chronological, channel, effectiveDestDir);
+        }
+
+        var tasks = newMessages
+            .Select(message => DownloadOneAsync(channel, chatId, entity, message, outputDir, preResolvedChapters, cancellationToken))
+            .ToList();
 
         if (tasks.Count > 0)
         {
@@ -272,6 +299,7 @@ public sealed class DownloadManager
 
     private async Task DownloadOneAsync(
         ChannelOptions channel, long chatId, TelegramEntity entity, TelegramMessage message, string outputDir,
+        IReadOnlyDictionary<int, ParseResult?>? preResolvedChapters,
         CancellationToken cancellationToken)
     {
         await _semaphore.WaitAsync(cancellationToken);
@@ -310,7 +338,9 @@ public sealed class DownloadManager
                 try
                 {
                     var effectiveDestDir = AudiobookNaming.EffectiveDestRoot(channel, _downloadRoot, _audiobooksDestDir);
-                    var info = ChapterResolution.Resolve(_parsingService, rawName, channel, effectiveDestDir);
+                    var info = preResolvedChapters is not null && preResolvedChapters.TryGetValue(message.Id, out var resolved)
+                        ? resolved
+                        : ChapterResolution.Resolve(_parsingService, rawName, channel, effectiveDestDir);
                     if (info is not null)
                     {
                         resultPath = _audiobookProcessor.ApplyTagging(

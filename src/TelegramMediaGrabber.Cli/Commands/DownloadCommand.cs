@@ -24,7 +24,11 @@ public sealed class DownloadCommand(
 {
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
-        console.MarkupLine($"Tracking [bold]{options.Channels.Count}[/] channel(s).");
+        console.MarkupLine($"[bold]{options.Channels.Count}[/] channel(s) configured:");
+        foreach (var channel in options.Channels)
+        {
+            console.MarkupLine($"  - {Markup.Escape(channel.Name)}");
+        }
 
         var audiobookProcessor = new AudiobookProcessingService(tagger);
         var parsingService = new ChapterParsingService();
@@ -32,6 +36,7 @@ public sealed class DownloadCommand(
         await console.Live(new Markup("Starting download...")).StartAsync(async ctx =>
         {
             var dashboard = new DownloadDashboard(ctx);
+            dashboard.SeedChannels(options.Channels.Select(c => c.Name));
             var manager = new DownloadManager(
                 client, stateRepository, audiobookProcessor, parsingService,
                 options.DownloadRoot, options.MaxConcurrentDownloads, dashboard, audiobooksDestDir);

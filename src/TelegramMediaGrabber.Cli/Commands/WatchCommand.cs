@@ -29,6 +29,10 @@ public sealed class WatchCommand(
             $"Watching [bold]{options.Channels.Count}[/] channel(s) for new messages. " +
             "This only catches new posts from now on — run [bold]--mode download[/] first " +
             "to pick up anything already posted. Press Ctrl+C to stop.");
+        foreach (var channel in options.Channels)
+        {
+            console.MarkupLine($"  - {Markup.Escape(channel.Name)}");
+        }
 
         var audiobookProcessor = new AudiobookProcessingService(tagger);
         var parsingService = new ChapterParsingService();
@@ -36,6 +40,7 @@ public sealed class WatchCommand(
         await console.Live(new Markup("Waiting for new messages...")).StartAsync(async ctx =>
         {
             var dashboard = new DownloadDashboard(ctx);
+            dashboard.SeedChannels(options.Channels.Select(c => c.Name));
             var manager = new DownloadManager(
                 client, stateRepository, audiobookProcessor, parsingService,
                 options.DownloadRoot, options.MaxConcurrentDownloads, dashboard, audiobooksDestDir);

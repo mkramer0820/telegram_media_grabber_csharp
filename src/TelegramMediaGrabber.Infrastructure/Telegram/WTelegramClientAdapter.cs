@@ -57,12 +57,35 @@ public sealed class WTelegramClientAdapter : ITelegramClient
     {
         ArgumentNullException.ThrowIfNull(configProvider);
 
+        SuppressRawProtocolLoggingUnlessOptedIn();
+
         // WTelegramClient's own delegate type is Func<string,string> (not
         // nullable-annotated by that library), but null is its documented
         // "use the default" signal for most config keys — this wrapper is
         // not lying to the compiler, just bridging an unannotated external
         // API.
         _client = new Client(what => configProvider(what)!);
+    }
+
+    /// <summary>
+    /// WTelegramClient's own <c>Helpers.Log</c> defaults to writing every
+    /// raw MTProto frame ("Sending Contacts_ResolveUsername", "Receiving
+    /// RpcResult", ...) straight to <see cref="Console"/> -- unrelated to,
+    /// and never configured through, this app's own Serilog/file logging.
+    /// Left alone it fights the Spectre.Console dashboard for the same
+    /// terminal exactly the way AGENTS.md §4.2 warns a console logging
+    /// provider would, just via a third-party path instead of our own
+    /// <c>ILogger</c>. Silenced by default; set <c>TG_VERBOSE=1</c> to
+    /// restore it for low-level protocol debugging.
+    /// </summary>
+    private static void SuppressRawProtocolLoggingUnlessOptedIn()
+    {
+        if (Environment.GetEnvironmentVariable("TG_VERBOSE") == "1")
+        {
+            return;
+        }
+
+        WTelegram.Helpers.Log = static (level, message) => { };
     }
 
     private static Func<string, string?> BuildEnvironmentConfigProvider() => what => what switch

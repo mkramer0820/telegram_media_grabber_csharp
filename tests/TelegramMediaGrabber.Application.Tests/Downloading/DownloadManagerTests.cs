@@ -301,6 +301,65 @@ public class DownloadManagerTests
     }
 
     /// <summary>
+    /// Regression test: untitled files (no parsable episode number in
+    /// their filename -- e.g. Telegram's own "Unknown Track" placeholder)
+    /// used to get their inferred chapter number from whatever order
+    /// concurrent downloads happened to *finish* in, not upload order.
+    /// Real messages are scanned newest-first (mirrored here by listing
+    /// them newest-first in <c>messagesToIterate</c>, same as the real
+    /// client), so before the fix, an untitled file posted right after a
+    /// properly-numbered "Ep 59" would very likely get processed (and thus
+    /// numbered) *before* that anchor even started downloading, since
+    /// nothing serialized chapter-number resolution ahead of the
+    /// concurrent download dispatch. This asserts all three untitled
+    /// files land immediately after their real "Ep 59" anchor, in the
+    /// order they were actually posted (chronological/upload order) --
+    /// regardless of scan order or concurrent completion order.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AudiobookMode_UntitledFiles_NumberedInUploadOrderAfterNearestAnchor()
+    {
+        var dir = CreateTempDir();
+        try
+        {
+            var entity = new TelegramEntity(42, "chan");
+            var baseDate = DateTimeOffset.UtcNow;
+
+            // Chronological (upload) order is oldest -> newest: anchor,
+            // then three untitled files. Listed here newest-first (4,3,2,1)
+            // to mirror the real client's actual scan order.
+            var anchor = new TelegramMessage(1, 42, baseDate, "Ep 59 - Power of Ki.mp3", true, false, false, false);
+            var untitled1 = new TelegramMessage(2, 42, baseDate.AddMinutes(1), "Unknown Track.mp3", true, false, false, false);
+            var untitled2 = new TelegramMessage(3, 42, baseDate.AddMinutes(2), "Unknown Track (2).mp3", true, false, false, false);
+            var untitled3 = new TelegramMessage(4, 42, baseDate.AddMinutes(3), "Unknown Track (3).mp3", true, false, false, false);
+
+            var client = new FakeTelegramClient(
+                entitiesById: new() { ["@chan"] = entity },
+                messagesToIterate: [untitled3, untitled2, untitled1, anchor]);
+            var stateRepository = new FakeStateRepository();
+
+            var metadata = new AudiobookMetadata("Some Author", "Some Novel");
+            var channel = MakeChannel(audiobookMode: true, metadata: metadata) with { MediaTypes = [MediaType.Audio] };
+            // maxConcurrent > 1 so the four downloads genuinely race for
+            // completion order, not just dispatch order.
+            var manager = MakeManager(dir, client, stateRepository, maxConcurrent: 4);
+            await manager.RunAsync([channel]);
+
+            var bookDir = AudiobookNaming.BookDir(Path.Combine(dir, "Audiobooks"), metadata);
+            // The anchor keeps its parsed subtitle; the three untitled
+            // files that follow it chronologically have none.
+            Assert.True(File.Exists(Path.Combine(bookDir, "Some Novel - Ep 0059 - Power of Ki.mp3")));
+            Assert.True(File.Exists(Path.Combine(bookDir, "Some Novel - Ep 0060.mp3")));
+            Assert.True(File.Exists(Path.Combine(bookDir, "Some Novel - Ep 0061.mp3")));
+            Assert.True(File.Exists(Path.Combine(bookDir, "Some Novel - Ep 0062.mp3")));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// Regression test: DownloadManager used to hardcode "{downloadRoot}/Audiobooks"
     /// as the tagged-file destination regardless of what LOCAL_MEDIA_SERVER
     /// (a configured, possibly external, media-server path) was set to --
