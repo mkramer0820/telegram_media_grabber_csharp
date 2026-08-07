@@ -31,6 +31,12 @@ logs/
 # Real channel config (keep only channels.example.yaml tracked)
 config/channels.yaml
 
+# Backup copies of anything (configs, .env, etc.) -- never meant to be
+# committed, but easy to leave lying around next to the real file
+# (e.g. config/channels.yaml.bk before an edit).
+*.bk
+*.bak
+
 # Editor/OS cruft
 .idea/
 *.swp

@@ -34,6 +34,26 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
         public double CurrentPercent;
         public int ErrorCount;
         public string? LastError;
+        public string? LastEpisode;
+        public DateTimeOffset? LastUpdateUtc;
+    }
+
+    /// <summary>Renders how long ago a channel last had any activity — the "is this channel maybe broken/renamed?" signal at a glance.</summary>
+    private static string FormatAge(DateTimeOffset? lastUpdateUtc)
+    {
+        if (lastUpdateUtc is not { } since)
+        {
+            return "never";
+        }
+
+        var age = DateTimeOffset.UtcNow - since;
+        return age switch
+        {
+            { TotalSeconds: < 60 } => "just now",
+            { TotalMinutes: < 60 } => $"{(int)age.TotalMinutes}m ago",
+            { TotalHours: < 24 } => $"{(int)age.TotalHours}h ago",
+            _ => $"{(int)age.TotalDays}d ago",
+        };
     }
 
     private readonly Dictionary<string, ChannelState> _channels = [];
@@ -86,6 +106,17 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
     private static int Priority(ChannelState state) => state.ErrorCount > 0 ? 0 : state.Done ? 2 : 1;
 
     /// <summary>
+    /// A channel with nothing worth looking at right now: no error, not
+    /// actively downloading a file, and nothing downloaded from it yet.
+    /// With dozens of channels configured, most sit at 0/0 for most of a
+    /// run (nothing new posted since last time) — those don't get a row
+    /// of their own, only a rolled-up count (<see cref="Render"/>), so the
+    /// table only lists channels that actually need a glance.
+    /// </summary>
+    private static bool IsQuiet(ChannelState state) =>
+        state.ErrorCount == 0 && state.CurrentFile is null && state.Downloaded == 0;
+
+    /// <summary>
     /// Best-effort terminal height; a real console always reports one, but
     /// this also runs (via <see cref="AnsiConsole.Live"/>) in contexts
     /// without a proper console handle, where querying it can throw --
@@ -125,12 +156,14 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
         var reserved = 1 + 4 + (activityLines > 0 ? activityLines + 3 : 0);
         var maxChannelRows = Math.Max(3, GetAvailableHeight() - reserved);
 
-        var ordered = _channels
+        var quiet = _channels.Where(kv => IsQuiet(kv.Value)).ToList();
+        var noteworthy = _channels
+            .Where(kv => !IsQuiet(kv.Value))
             .OrderBy(kv => Priority(kv.Value))
             .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var shown = ordered.Take(maxChannelRows).ToList();
-        var hidden = ordered.Skip(shown.Count).ToList();
+        var shown = noteworthy.Take(maxChannelRows).ToList();
+        var hidden = noteworthy.Skip(shown.Count).ToList();
 
         var table = new Table().Title("Channels").Expand();
         table.AddColumn("Channel");
@@ -138,6 +171,14 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
         table.AddColumn(new TableColumn("Downloaded").RightAligned());
         table.AddColumn("Status");
         table.AddColumn("Current");
+        table.AddColumn("Last grabbed");
+        table.AddColumn("Last update");
+
+        if (shown.Count == 0)
+        {
+            table.AddRow(new Markup("[dim]Nothing to report yet — every channel is quiet (see below).[/]"),
+                Text.Empty, Text.Empty, Text.Empty, Text.Empty, Text.Empty, Text.Empty);
+        }
 
         foreach (var (name, state) in shown)
         {
@@ -151,7 +192,11 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
                     ? $"[red]{Markup.Escape(lastError)}[/]"
                     : "[dim]-[/]";
 
-            table.AddRow(Markup.Escape(name), state.Scanned.ToString(), state.Downloaded.ToString(), status, current);
+            var lastEpisode = state.LastEpisode is { } ep ? Markup.Escape(ep) : "[dim]-[/]";
+
+            table.AddRow(
+                Markup.Escape(name), state.Scanned.ToString(), state.Downloaded.ToString(), status, current,
+                lastEpisode, FormatAge(state.LastUpdateUtc));
         }
 
         if (hidden.Count > 0)
@@ -165,7 +210,24 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
             var color = hiddenErrors > 0 ? "red" : hiddenInProgress > 0 ? "yellow" : "dim";
             table.AddRow(
                 new Markup($"[{color}]+ {hidden.Count} more ({detail}) — window too short to show[/]"),
-                Text.Empty, Text.Empty, Text.Empty, Text.Empty);
+                Text.Empty, Text.Empty, Text.Empty, Text.Empty, Text.Empty, Text.Empty);
+        }
+
+        if (quiet.Count > 0)
+        {
+            var quietScanning = quiet.Count(kv => !kv.Value.Done);
+            var quietDone = quiet.Count - quietScanning;
+            // Oldest quiet channel surfaced explicitly -- a channel that's
+            // been quiet the longest is the most likely one to actually be
+            // broken (renamed/dead) rather than just having nothing new to
+            // post; buried inside a rolled-up count is exactly where you'd
+            // otherwise never notice it.
+            var stalest = quiet.Select(kv => kv.Value.LastUpdateUtc).Where(t => t is not null).MinBy(t => t);
+            var stalestNote = stalest is not null ? $", oldest last update: {FormatAge(stalest)}" : "";
+            table.AddRow(
+                new Markup($"[dim]+ {quiet.Count} quiet ({quietDone} done, {quietScanning} still scanning) — " +
+                    $"nothing downloaded, no errors{stalestNote}[/]"),
+                Text.Empty, Text.Empty, Text.Empty, Text.Empty, Text.Empty, Text.Empty);
         }
 
         var rows = new List<IRenderable> { summary, table };
@@ -195,6 +257,7 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
         var state = GetOrAddChannel(progress.ChatName);
         state.CurrentFile = progress.FileName;
         state.CurrentPercent = percent;
+        state.LastUpdateUtc = DateTimeOffset.UtcNow;
         Refresh();
     }
 
@@ -202,7 +265,9 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
     {
         var state = GetOrAddChannel(chatName);
         state.CurrentFile = null;
-        AddActivity($"[green]✓[/] {Markup.Escape(chatName)}: {Markup.Escape(Path.GetFileName(finalPath))}");
+        state.LastEpisode = Path.GetFileName(finalPath);
+        state.LastUpdateUtc = DateTimeOffset.UtcNow;
+        AddActivity($"[green]✓[/] {Markup.Escape(chatName)}: {Markup.Escape(state.LastEpisode)}");
         Refresh();
     }
 
@@ -212,6 +277,7 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
         state.CurrentFile = null;
         state.ErrorCount++;
         state.LastError = error;
+        state.LastUpdateUtc = DateTimeOffset.UtcNow;
         var location = messageId > 0 ? $"message {messageId}" : "channel";
         AddActivity($"[red]✗[/] {Markup.Escape(chatName)} ({location}): {Markup.Escape(error)}");
         Refresh();
@@ -223,6 +289,12 @@ public sealed class DownloadDashboard(LiveDisplayContext context) : IDownloadPro
         state.Scanned = progress.MessagesScanned;
         state.Downloaded = progress.FilesDownloaded;
         state.Done = progress.Done;
+        // Deliberately not touching LastUpdateUtc here: this fires just
+        // from scanning/resolving a channel, not from anything new
+        // actually being found there -- stamping it on every scan would
+        // make a genuinely stale channel look freshly active every time
+        // a catch-up pass merely checks it, defeating the point of this
+        // field as a "when did this channel last actually have something" signal.
         Refresh();
     }
 

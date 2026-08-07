@@ -486,20 +486,41 @@ public sealed class WTelegramClientAdapter : ITelegramClient
         {
             foreach (var update in FlattenUpdates(updates))
             {
-                var raw = update switch
+                // One malformed/unexpected update must not take out every
+                // later update in this same batch (a bare `throw` here
+                // propagates straight out of the SDK's own event-dispatch
+                // call, past this whole foreach) — worse, since this is the
+                // *producer* side of the queue the consuming `await foreach`
+                // in WatchAsync/RunAsync never gets a chance to catch
+                // anything: the failure happens before a message is even
+                // yielded, so without this try/catch a single bad message
+                // would silently stop new items from ever reaching a
+                // long-running watch session again, with nothing in the
+                // dashboard to explain why.
+                try
                 {
-                    UpdateNewChannelMessage u => u.message,
-                    UpdateNewMessage u => u.message,
-                    _ => null,
-                };
+                    var raw = update switch
+                    {
+                        UpdateNewChannelMessage u => u.message,
+                        UpdateNewMessage u => u.message,
+                        _ => null,
+                    };
 
-                if (raw is not Message message || ExtractChatId(message.peer_id) is not { } chatId)
-                {
-                    continue;
+                    if (raw is not Message message || ExtractChatId(message.peer_id) is not { } chatId)
+                    {
+                        continue;
+                    }
+
+                    _rawMessages[(chatId, message.ID)] = message;
+                    queue.Writer.TryWrite(ToTelegramMessage(chatId, message));
                 }
-
-                _rawMessages[(chatId, message.ID)] = message;
-                queue.Writer.TryWrite(ToTelegramMessage(chatId, message));
+                catch (Exception exc)
+                {
+                    // Deliberately Console.Error, not WTelegram.Helpers.Log --
+                    // that hook is silenced by default (SuppressRawProtocolLoggingUnlessOptedIn)
+                    // and this is a real dropped-item warning, not raw protocol noise.
+                    Console.Error.WriteLine($"[watch] Dropped one incoming update, continuing: {exc.Message}");
+                }
             }
 
             return Task.CompletedTask;

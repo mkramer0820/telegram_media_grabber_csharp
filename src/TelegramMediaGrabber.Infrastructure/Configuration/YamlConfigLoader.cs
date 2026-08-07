@@ -315,14 +315,40 @@ public sealed class YamlConfigLoader
         };
     }
 
+    /// <summary>
+    /// Named key scopes elsewhere in the schema, checked when a key is
+    /// rejected so the error can say "that's a real key, just not here" —
+    /// e.g. a channel-level key like <c>max_messages</c> mistakenly nested
+    /// one level too deep inside that channel's <c>metadata</c>.
+    /// </summary>
+    private static readonly (string Scope, string[] Keys)[] KnownScopes =
+    {
+        ("top-level config", TopLevelKeys),
+        ("a channel entry", ChannelKeys),
+        ("channel metadata", MetadataKeys),
+        ("an episode_range", EpisodeRangeKeys),
+        ("an override entry", OverrideKeys),
+        ("an upload_jobs entry", UploadJobKeys),
+    };
+
     private static void RejectUnknownKeys(IDictionary<string, object?> map, string context, IReadOnlyCollection<string> allowedKeys)
     {
         var unknown = map.Keys.Where(k => !allowedKeys.Contains(k)).ToList();
-        if (unknown.Count > 0)
+        if (unknown.Count == 0)
         {
-            throw new InvalidOperationException(
-                $"Unknown key(s) in {context}: {string.Join(", ", unknown.Select(k => $"'{k}'"))}. " +
-                $"Allowed keys: {string.Join(", ", allowedKeys)}.");
+            return;
         }
+
+        var details = unknown.Select(k =>
+        {
+            var elsewhere = KnownScopes.FirstOrDefault(s => s.Keys.Contains(k) && !ReferenceEquals(s.Keys, allowedKeys));
+            return elsewhere.Scope is null
+                ? $"'{k}'"
+                : $"'{k}' (this is a valid key, but belongs in {elsewhere.Scope} — check its indentation/nesting)";
+        });
+
+        throw new InvalidOperationException(
+            $"Unknown key(s) in {context}: {string.Join(", ", details)}. " +
+            $"Allowed keys here: {string.Join(", ", allowedKeys)}.");
     }
 }
