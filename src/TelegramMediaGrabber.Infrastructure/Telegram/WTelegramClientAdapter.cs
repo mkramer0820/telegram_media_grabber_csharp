@@ -639,25 +639,112 @@ public sealed class WTelegramClientAdapter : ITelegramClient
         var hasVideo = false;
         var hasPhoto = false;
         var hasDocument = false;
+        string? text = null;
+        List<LinkEntry>? links = null;
+        long? senderId = null;
 
-        if (raw is Message { media: MessageMedia media })
+        if (raw is Message message)
         {
-            switch (media)
+            text = string.IsNullOrEmpty(message.message) ? null : message.message;
+            links = ExtractLinks(message.message, message.entities);
+            senderId = ExtractChatId(message.from_id);
+
+            if (message.media is { } media)
             {
-                case MessageMediaDocument { document: Document document }:
-                    hasDocument = true;
-                    fileName = document.Filename;
-                    hasAudio = document.attributes.Any(a => a is DocumentAttributeAudio);
-                    hasVideo = document.attributes.Any(a => a is DocumentAttributeVideo);
-                    break;
-                case MessageMediaPhoto { photo: Photo }:
-                    hasPhoto = true;
-                    break;
+                switch (media)
+                {
+                    case MessageMediaDocument { document: Document document }:
+                        hasDocument = true;
+                        fileName = document.Filename;
+                        hasAudio = document.attributes.Any(a => a is DocumentAttributeAudio);
+                        hasVideo = document.attributes.Any(a => a is DocumentAttributeVideo);
+                        break;
+                    case MessageMediaPhoto { photo: Photo }:
+                        hasPhoto = true;
+                        break;
+                }
             }
         }
 
         var date = new DateTimeOffset(DateTime.SpecifyKind(raw.Date, DateTimeKind.Utc));
-        return new TelegramMessage(raw.ID, chatId, date, fileName, hasAudio, hasVideo, hasPhoto, hasDocument);
+        return new TelegramMessage(raw.ID, chatId, date, fileName, hasAudio, hasVideo, hasPhoto, hasDocument, text, links, senderId);
+    }
+
+    /// <summary>
+    /// Pulls every URL Telegram itself recognized in a message: bare
+    /// auto-detected links (<see cref="MessageEntityUrl"/>, substring of
+    /// <paramref name="text"/>) and markdown-style <c>[label](url)</c>
+    /// links (<see cref="MessageEntityTextUrl"/>, carries its own <c>url</c>
+    /// field independent of the visible substring) alike. Each link is
+    /// paired with its own best-effort label (<see cref="ExtractLabel"/>)
+    /// -- a message commonly lists several distinct titles each with
+    /// their own link right below it, and a flat list of URLs alone loses
+    /// that per-link association. Returns null (not an empty list) when
+    /// there are none, so a message with no links doesn't need its own
+    /// allocation.
+    /// </summary>
+    private static List<LinkEntry>? ExtractLinks(string? text, MessageEntity[]? entities)
+    {
+        if (entities is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        List<LinkEntry>? links = null;
+        foreach (var entity in entities)
+        {
+            var (url, offset) = entity switch
+            {
+                MessageEntityTextUrl textUrl => (textUrl.url, entity.offset),
+                MessageEntityUrl urlEntity when text is not null
+                    && urlEntity.offset >= 0 && urlEntity.offset + urlEntity.length <= text.Length
+                    => (text.Substring(urlEntity.offset, urlEntity.length), (int?)urlEntity.offset),
+                _ => (null, null),
+            };
+
+            if (url is null)
+            {
+                continue;
+            }
+
+            var label = offset is { } o ? ExtractLabel(text, o) : null;
+            (links ??= new List<LinkEntry>()).Add(new LinkEntry(url, label));
+        }
+
+        return links;
+    }
+
+    /// <summary>
+    /// Nearest non-blank line of text immediately before a link's
+    /// position — the common "Title\nlink" (optionally with a blank line
+    /// before the next title/link pair) posting style this targets. Never
+    /// returns a line that itself looks like a link (the previous item's
+    /// URL, when two links are posted back to back with no title) --
+    /// better to report no label than to mislabel a link as a title.
+    /// </summary>
+    private static string? ExtractLabel(string? text, int linkOffset)
+    {
+        if (string.IsNullOrEmpty(text) || linkOffset <= 0 || linkOffset > text.Length)
+        {
+            return null;
+        }
+
+        var lines = text[..linkOffset].Split('\n');
+        for (var i = lines.Length - 1; i >= 0; i--)
+        {
+            var line = lines[i].Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            return line.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || line.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : line;
+        }
+
+        return null;
     }
 
     /// <summary>Minimal extension-based MIME guess for upload — Telegram mostly cares about "photo"/"video"/generic document handling, not exact MIME accuracy.</summary>

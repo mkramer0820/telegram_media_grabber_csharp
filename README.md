@@ -8,8 +8,9 @@ learned running the Python version against real libraries.
 
 ## Status
 
-**Builds, tests green (117/117), and runs.** All four modes
-(`download`/`upload`/`reprocess`/`verify`) are wired end-to-end.
+**Builds, tests green (131/131), and runs.** All modes
+(`download`/`upload`/`reprocess`/`verify`/`watch`/`resolve-ids`/`export-links`/`links-to-jobs`)
+are wired end-to-end. Run with `--help` for the full command reference.
 `--mode reprocess` has been run against real generated audio files and
 verified to tag/relocate correctly — it's fully offline (no Telegram
 connection), so it's the only mode verified against real files without
@@ -25,15 +26,12 @@ downloaded, never silently skipped; see `EpisodeRangeExtractor`).
 chat, dedup-tracked like `upload_jobs`, independent of it. See
 `config/channels.example.yaml` for worked examples of each.
 
-**Known gap**: the Telegram client adapter (`WTelegramClientAdapter`)
-compiles against the real WTelegramClient API and has structurally sound
-FloodWait retry logic (independently unit tested), but has **not been
-exercised against a live Telegram connection** — no API credentials were
-available while building it. `download`/`upload`/`verify` modes will need
-real credentials and a first live run to confirm end-to-end; see that
-class's XML doc remarks for the specific known design wrinkle (a raw-message
-cache keyed by `(chatId, messageId)`, populated by `IterMessagesAsync`/
-`GetMessagesAsync`, that `DownloadMediaAsync` depends on).
+The Telegram client adapter (`WTelegramClientAdapter`) has been exercised
+against a live connection (`resolve-ids`/`export-links`/`download`/`watch`
+all confirmed working against real channels) — see that class's XML doc
+remarks for a design wrinkle worth knowing if you're extending it: a
+raw-message cache keyed by `(chatId, messageId)`, populated by
+`IterMessagesAsync`/`GetMessagesAsync`, that `DownloadMediaAsync` depends on.
 
 ## Building and running
 
@@ -66,7 +64,31 @@ dotnet run --project src/TelegramMediaGrabber.Cli -- --mode watch      # live-on
 dotnet run --project src/TelegramMediaGrabber.Cli -- --mode reprocess  # offline, no credentials needed
 dotnet run --project src/TelegramMediaGrabber.Cli -- --mode verify
 dotnet run --project src/TelegramMediaGrabber.Cli -- --mode upload --interval 300   # force a repeating upload scan manually
+dotnet run --project src/TelegramMediaGrabber.Cli -- --mode resolve-ids           # print every configured chat's real ID/title/link
+dotnet run --project src/TelegramMediaGrabber.Cli -- --mode resolve-ids --write   # ...and pin renamed ones into channels.yaml
+dotnet run --project src/TelegramMediaGrabber.Cli -- --mode export-links --target "@some_channel"  # dump every link posted, to exports/*.json
+dotnet run --project src/TelegramMediaGrabber.Cli -- --mode links-to-jobs --target "@some_channel"  # links -> uploads/<name>/ folders + upload_jobs YAML
+dotnet run --project src/TelegramMediaGrabber.Cli -- --mode links-to-jobs --from-yaml exports/upload_jobs_x.yaml   # sync folders to a hand-edited YAML, offline
+dotnet run --project src/TelegramMediaGrabber.Cli -- --help             # full command/option reference
 ```
+
+`--mode resolve-ids` resolves every configured channel/`upload_jobs` chat
+(however it's written — username, t.me link, or numeric ID) and prints its
+permanent numeric Chat ID, Telegram's own title for it, and a link —
+useful for telling similarly-named/similarly-purposed channels apart, or
+recovering from a rename (`USERNAME_NOT_OCCUPIED`). `--write` rewrites
+`config/channels.yaml` in place for any entry whose resolved ID differs
+from what's configured, embedding the resolved title in a trailing
+comment on that line so the config stays self-documenting; it only ever
+writes back an ID it just confirmed resolves correctly, and only touches
+entries that changed, never a failed resolution. See `CONFIG.md`'s
+"When a channel's username changes" section for the full recovery flow.
+
+`--mode export-links` doesn't need to be a configured channel — pass any chat ID, `@username`, invite link, or exact chat title via `--target`. Add `--max-messages N` to cap how much history it scans (default: full history). Writes a JSON file to `exports/` with one entry per link found (message ID, date, sender ID, a best-effort label for that specific link, the link itself, and the full message text for context) — read-only, never touches `state.db`.
+
+`--mode links-to-jobs` takes it a step further: same scan as `export-links` (same `--target`/`--max-messages`), but for each distinct link found it resolves the link *directly* to get the real Telegram channel's title (falling back to a message-text-derived label, then the URL itself, if that fails — resolving a link to a channel this account hasn't joined costs an extra round-trip and Telegram can throttle that hard, so this step prints live per-link progress since it can take a while), creates an empty `uploads/<name>/` folder, and writes a ready-to-paste `upload_jobs:` YAML block (to a file under `exports/`) pairing each folder with that link as `target_chat`. It never touches `config/channels.yaml` itself — review the generated file and paste in whichever entries you actually want, then drop files into the matching `uploads/<name>/` folder to have them uploaded there.
+
+If a link couldn't be auto-resolved and you rename its `source_dir` by hand in the generated YAML, re-run with `--mode links-to-jobs --from-yaml <path>` instead of `--target` — it reads that YAML file and creates whichever `source_dir` folders it lists that don't exist yet, matching your renamed entries. Purely a filesystem sync: no Telegram connection, no credentials needed, never touches an existing folder.
 
 `--interval <seconds>` re-runs any of the single-purpose modes in a loop
 instead of running once and exiting. It's a manual-override equivalent of

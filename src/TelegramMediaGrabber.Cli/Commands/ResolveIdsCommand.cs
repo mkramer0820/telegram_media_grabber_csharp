@@ -42,28 +42,25 @@ public sealed class ResolveIdsCommand(
 {
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
-        var table = new Table()
-            .AddColumn("Name")
-            .AddColumn("Configured as")
-            .AddColumn("Chat ID")
-            .AddColumn("Title")
-            .AddColumn("Username")
-            .AddColumn("Kind")
-            .AddColumn("Note");
-
-        var pendingUpdates = new List<(string ConfiguredValue, string NewChatId)>();
+        // A Spectre Table here previously mangled exactly the fields you
+        // need to tell two similarly-named/similarly-purposed channels
+        // apart -- cramming 5-7 columns into a normal terminal width wraps
+        // "Name"/"Title" mid-word (e.g. "shadow_sl\nave_audio\nbook"), or
+        // (if those columns are forced NoWrap instead) starves Chat
+        // ID/Link down to 1-character-wide columns instead. A one-line-
+        // per-field block per channel has no column-width fight to lose:
+        // every field is always shown in full, at any terminal width.
+        var pendingUpdates = new List<(string ConfiguredValue, string NewChatId, string Title)>();
 
         foreach (var channel in options.Channels)
         {
-            await ResolveOneAsync(table, channel.Name, channel.Id, channel.Metadata?.NovelTitle, pendingUpdates, cancellationToken);
+            await ResolveOneAsync(channel.Name, channel.Id, channel.Metadata?.NovelTitle, pendingUpdates, cancellationToken);
         }
 
         foreach (var job in options.UploadJobs)
         {
-            await ResolveOneAsync(table, $"upload_jobs: {job.SourceDir}", job.TargetChat, novelTitle: null, pendingUpdates, cancellationToken);
+            await ResolveOneAsync($"upload_jobs: {job.SourceDir}", job.TargetChat, novelTitle: null, pendingUpdates, cancellationToken);
         }
-
-        console.Write(table);
 
         if (!writeBack)
         {
@@ -96,14 +93,14 @@ public sealed class ResolveIdsCommand(
     }
 
     private async Task ResolveOneAsync(
-        Table table, string name, string configuredId, string? novelTitle,
-        List<(string ConfiguredValue, string NewChatId)> pendingUpdates, CancellationToken cancellationToken)
+        string name, string configuredId, string? novelTitle,
+        List<(string ConfiguredValue, string NewChatId, string Title)> pendingUpdates, CancellationToken cancellationToken)
     {
         try
         {
             var entity = await client.ResolveEntityAsync(configuredId, cancellationToken);
             await stateRepository.CacheResolvedEntityAsync(configuredId, entity, cancellationToken);
-            AddResolvedRow(table, name, configuredId, entity, note: "-", pendingUpdates);
+            PrintResolved(name, configuredId, entity, note: null, pendingUpdates);
         }
         catch (Exception ex)
         {
@@ -113,53 +110,68 @@ public sealed class ResolveIdsCommand(
                 if (byTitle is not null)
                 {
                     await stateRepository.CacheResolvedEntityAsync(configuredId, byTitle, cancellationToken);
-                    AddResolvedRow(table, name, configuredId, byTitle, note: "recovered by title match (renamed?)", pendingUpdates);
+                    PrintResolved(name, configuredId, byTitle, note: "recovered by title match (renamed?)", pendingUpdates);
                     return;
                 }
             }
 
-            table.AddRow(
-                Markup.Escape(name), Markup.Escape(configuredId),
-                $"[red]Failed: {Markup.Escape(ex.Message)}[/]", "-", "-", "-",
-                novelTitle is null ? "-" : "[red]title match also failed — not in joined chats?[/]");
+            console.MarkupLine($"[bold]{Markup.Escape(name)}[/]");
+            console.MarkupLine($"  Configured as: {Markup.Escape(configuredId)}");
+            console.MarkupLine($"  [red]Failed: {Markup.Escape(ex.Message)}[/]" +
+                (novelTitle is null ? "" : " [red](title match also failed, not in joined chats?)[/]"));
+            console.WriteLine();
         }
     }
 
-    private void AddResolvedRow(
-        Table table, string name, string configuredId, TelegramEntity entity, string note,
-        List<(string ConfiguredValue, string NewChatId)> pendingUpdates)
+    private void PrintResolved(
+        string name, string configuredId, TelegramEntity entity, string? note,
+        List<(string ConfiguredValue, string NewChatId, string Title)> pendingUpdates)
     {
         var chatIdText = entity.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var alreadyPinned = string.Equals(configuredId, chatIdText, StringComparison.Ordinal);
 
-        table.AddRow(
-            Markup.Escape(name),
-            Markup.Escape(configuredId),
-            $"[green]{entity.Id}[/]",
-            Markup.Escape(entity.DisplayName),
-            Markup.Escape(entity.Username ?? "-"),
-            Markup.Escape(entity.Kind ?? "-"),
-            Markup.Escape(note));
+        // Prefer a real t.me/username link when the channel has a public
+        // one; most of these are private invite-link channels though, so
+        // fall back to whatever was configured (usually already the
+        // invite link itself) rather than showing a bare "-".
+        var link = entity.Username is { } username ? $"https://t.me/{username}" : configuredId;
+
+        console.MarkupLine($"[bold]{Markup.Escape(name)}[/]");
+        console.MarkupLine($"  Title:   {Markup.Escape(entity.DisplayName)}");
+        console.MarkupLine($"  Chat ID: [green]{entity.Id}[/]{(alreadyPinned ? " [dim](already pinned)[/]" : "")}");
+        console.MarkupLine($"  Link:    {Markup.Escape(link)}");
+        if (note is not null)
+        {
+            console.MarkupLine($"  Note:    [yellow]{Markup.Escape(note)}[/]");
+        }
+
+        console.WriteLine();
 
         if (!alreadyPinned)
         {
-            pendingUpdates.Add((configuredId, chatIdText));
+            pendingUpdates.Add((configuredId, chatIdText, entity.DisplayName));
         }
     }
 
     /// <summary>
     /// Targeted per-line replace of <c>id: "&lt;configured value&gt;"</c> with the
-    /// resolved numeric Chat ID, keeping the original value in a trailing
-    /// comment. Only touches lines that match exactly once — a value that's
-    /// ambiguous or already edited is left for a human rather than guessed at.
+    /// resolved numeric Chat ID, keeping the original value and the
+    /// resolved title in a trailing comment -- the title only ever comes
+    /// from <paramref name="updates"/>, i.e. only for an entry that just
+    /// got freshly, successfully re-resolved this run ("the version
+    /// that's good") -- a failed resolve never reaches this method at
+    /// all, so a bad/unconfirmed title can never get written into the
+    /// config. Only touches lines that match exactly once — a value
+    /// that's ambiguous or already edited is left for a human rather than
+    /// guessed at.
     /// </summary>
-    private static int RewriteConfig(string path, List<(string ConfiguredValue, string NewChatId)> updates)
+    private static int RewriteConfig(string path, List<(string ConfiguredValue, string NewChatId, string Title)> updates)
     {
         var text = File.ReadAllText(path);
         var updated = 0;
         var today = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
 
-        foreach (var (configuredValue, newChatId) in updates)
+        foreach (var (configuredValue, newChatId, title) in updates)
         {
             var target = $"id: \"{configuredValue}\"";
             var firstIndex = text.IndexOf(target, StringComparison.Ordinal);
@@ -169,7 +181,8 @@ public sealed class ResolveIdsCommand(
                 continue;
             }
 
-            var replacement = $"id: \"{newChatId}\"  # was \"{configuredValue}\" (renamed) -- pinned to permanent chat ID by --write on {today}";
+            var safeTitle = title.Replace("\"", "'");
+            var replacement = $"id: \"{newChatId}\"  # \"{safeTitle}\" -- was \"{configuredValue}\" (renamed) -- pinned to permanent chat ID by --write on {today}";
             text = string.Concat(text.AsSpan(0, firstIndex), replacement, text.AsSpan(firstIndex + target.Length));
             updated++;
         }

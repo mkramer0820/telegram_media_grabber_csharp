@@ -61,6 +61,12 @@ catch (ArgumentException ex)
     return 1;
 }
 
+if (cliOptions.Help)
+{
+    Console.WriteLine(CliOptions.UsageText);
+    return 0;
+}
+
 // --mode reprocess is fully offline and never touches Telegram, so it's
 // the one mode that doesn't need real credentials -- everything else
 // does. Checked here, before any network/DB work starts, so a first-time
@@ -284,6 +290,15 @@ async Task RunOnceAsync()
         return;
     }
 
+    if (cliOptions.Mode == "links-to-jobs" && cliOptions.FromYaml is not null)
+    {
+        // Also fully offline — a pure filesystem sync against a YAML file
+        // already on disk, no reason to require Telegram credentials/a
+        // live connection for this path.
+        LinksToJobsCommand.SyncFromYaml(cliOptions.FromYaml, console);
+        return;
+    }
+
     await using var client = new WTelegramClientAdapter();
     logger.LogInformation("Connecting to Telegram...");
     await client.ConnectAndAuthenticateAsync(cts.Token);
@@ -303,6 +318,12 @@ async Task RunOnceAsync()
             break;
         case "resolve-ids":
             await new ResolveIdsCommand(client, stateRepository, options, console, cliOptions.Write, channelsConfigPath).RunAsync(cts.Token);
+            break;
+        case "export-links":
+            await new ExportLinksCommand(client, console, cliOptions.Target!, cliOptions.MaxMessages, "exports").RunAsync(cts.Token);
+            break;
+        case "links-to-jobs":
+            await new LinksToJobsCommand(client, console, cliOptions.Target!, cliOptions.MaxMessages, "uploads", "exports").RunAsync(cts.Token);
             break;
         case "download":
             await new DownloadCommand(client, stateRepository, tagger, options, audiobooksDestDir, console).RunAsync(cts.Token);
